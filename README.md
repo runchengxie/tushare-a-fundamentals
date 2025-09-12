@@ -21,7 +21,7 @@ income-downloader --help
 
 或直接从源码运行：
 ```
-python3 src/app.py --help
+python3 -m tushare_a_fundamentals.app --help
 ```
 
 ## 配置文件
@@ -44,7 +44,7 @@ income-downloader --mode quarterly --quarters 40 --vip --prefer-single-quarter
 ```
 或：
 ```
-python3 src/app.py --mode quarterly --quarters 40 --vip --prefer-single-quarter
+python3 -m tushare_a_fundamentals.app --mode quarterly --quarters 40 --vip --prefer-single-quarter
 ```
 - 全市场，年度，近 12 年，存 parquet：
 ```

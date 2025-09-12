@@ -4,7 +4,7 @@ version = "0.2.0"
 description = "A-share income statement downloader using TuShare"
 readme = "README.md"
 authors = [{ name = "Richard" }]
-license = { file = "LICENSE" }
+license = "MIT"
 requires-python = ">=3.10,<3.13"
 dependencies = [
     "tushare>=1.2.89",
