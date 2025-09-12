@@ -3,6 +3,8 @@ name = "tushare-a-fundamentals"
 version = "0.2.0"
 description = "A-share income statement downloader using TuShare"
 readme = "README.md"
+authors = [{ name = "Richard" }]
+license = { file = "LICENSE" }
 requires-python = ">=3.10,<3.13"
 dependencies = [
     "tushare>=1.2.89",
@@ -14,6 +16,9 @@ dependencies = [
 
 [project.scripts]
 income-downloader = "app:main"
+
+[tool.setuptools]
+py-modules = ["app"]
 
 [tool.uv]
 python-preference = "only-managed"
@@ -31,11 +36,11 @@ build-backend = "setuptools.build_meta"
 
 [tool.black]
 line-length = 88
-target-version = ['py39']
+target-version = ['py310']
 
 [tool.ruff]
 line-length = 88
-target-version = "py39"
+target-version = "py310"
 select = ["E", "F", "W", "C90"]
 
 [tool.ruff.mccabe]
