@@ -1,18 +1,18 @@
 [project]
 name = "tushare-a-fundamentals"
-version = "0.1.0"
-description = "Tushare API credits tester"
+version = "0.2.0"
+description = "A-share income statement downloader using TuShare"
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
     "tushare>=1.2.89",
-    "python-dotenv>=1.0.0",
     "pandas>=1.5.0",
+    "pyyaml>=6.0",
     "numpy>=1.24.0",
 ]
 
 [project.scripts]
-test-credits = "test_api_credits:main"
+income-downloader = "app:main"
 
 [tool.uv]
 dev-dependencies = [
