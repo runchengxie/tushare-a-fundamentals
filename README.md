@@ -5,8 +5,8 @@
 提示：所有命令行输出与错误信息均为中文；代码实现为英文。
 
 ## 依赖与环境
-- Python 3.9+
-- 依赖：tushare、pandas、pyyaml、numpy
+- Python 3.10+
+- 依赖：tushare、pandas、pyyaml、numpy、python-dotenv
 - TuShare Token：优先读取环境变量 `TUSHARE_TOKEN`，也可通过 `--token` 传入
 
 安装依赖（推荐使用 uv 或 pip）：
