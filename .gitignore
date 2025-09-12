@@ -16,5 +16,13 @@ eggs/
 # Ruff stuff:
 .ruff_cache/
 
+# Coverage
+.coverage
+coverage.xml
+*.cover
+
+# IDE-related
+.vscode/
+
 # Debugging purpose
 full_project_source.txt
