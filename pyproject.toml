@@ -26,8 +26,9 @@ required-version = ">=0.8.0"
 package = true
 dev-dependencies = [
     "pytest>=7.0.0",
-    "black>=23.0.0", 
+    "black>=23.0.0",
     "ruff>=0.1.0",
+    "pytest-cov>=4.0.0",
 ]
 
 [build-system]
@@ -45,3 +46,11 @@ select = ["E", "F", "W", "C90"]
 
 [tool.ruff.mccabe]
 max-complexity = 10
+
+[tool.pytest.ini_options]
+addopts = ["--cov=src", "--cov-report=term-missing"]
+markers = [
+    "unit: unit tests",
+    "integration: integration tests",
+]
+testpaths = ["tests"]
