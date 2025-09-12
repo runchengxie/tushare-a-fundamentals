@@ -15,3 +15,6 @@ eggs/
 
 # Ruff stuff:
 .ruff_cache/
+
+# Debugging purpose
+full_project_source.txt
