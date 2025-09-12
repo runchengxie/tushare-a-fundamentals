@@ -5,6 +5,11 @@ import time
 import yaml
 import pandas as pd
 from typing import List, Dict, Optional, Tuple
+from dotenv import load_dotenv
+
+load_dotenv()
+if os.getenv("TUSHARE_API_KEY") and not os.getenv("TUSHARE_TOKEN"):
+    os.environ["TUSHARE_TOKEN"] = os.getenv("TUSHARE_API_KEY")
 
 FLOW_FIELDS = [
     "total_revenue",
