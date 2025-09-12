@@ -15,10 +15,11 @@ dependencies = [
 ]
 
 [project.scripts]
-income-downloader = "app:main"
+income-downloader = "tushare_a_fundamentals.app:main"
 
 [tool.setuptools]
-py-modules = ["app"]
+package-dir = {"" = "src"}
+packages = ["tushare_a_fundamentals"]
 
 [tool.uv]
 python-preference = "only-managed"

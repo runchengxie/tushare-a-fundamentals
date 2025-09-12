@@ -9,9 +9,19 @@
 - 依赖：tushare、pandas、pyyaml、numpy、python-dotenv
 - TuShare Token：优先读取环境变量 `TUSHARE_TOKEN`，也可通过 `--token` 传入
 
-安装依赖（推荐使用 uv 或 pip）：
+安装（可编辑模式）：
 ```
 pip install -e .
+```
+
+安装后可使用控制台脚本：
+```
+income-downloader --help
+```
+
+或直接从源码运行：
+```
+python3 src/app.py --help
 ```
 
 ## 配置文件
@@ -30,15 +40,19 @@ pip install -e .
 ## 使用示例
 - 全市场，季度，近 40 季：
 ```
-python app.py --mode quarterly --quarters 40 --vip --prefer-single-quarter
+income-downloader --mode quarterly --quarters 40 --vip --prefer-single-quarter
+```
+或：
+```
+python3 src/app.py --mode quarterly --quarters 40 --vip --prefer-single-quarter
 ```
 - 全市场，年度，近 12 年，存 parquet：
 ```
-python app.py --mode annual --years 12 --vip --format parquet
+income-downloader --mode annual --years 12 --vip --format parquet
 ```
 - 单票，TTM，近 24 季：
 ```
-python app.py --mode ttm --ts-code 600000.SH --quarters 24
+income-downloader --mode ttm --ts-code 600000.SH --quarters 24
 ```
 
 ## 输出产物
