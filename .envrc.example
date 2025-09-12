@@ -1,0 +1,16 @@
+# Loading .env (if available)
+dotenv_if_exists .env
+
+# If a local virtual environment exists, add it to the PATH and export VIRTUAL_ENV
+if [ -d .venv ]; then
+  export VIRTUAL_ENV="$PWD/.venv"
+  PATH_add "$VIRTUAL_ENV/bin"
+fi
+
+# Since you are using uv, this also helps ensure .venv exists (it will be created on the first run)
+if command -v uv >/dev/null 2>&1; then
+  if [ ! -d .venv ]; then
+    uv venv
+    uv sync
+  fi
+fi

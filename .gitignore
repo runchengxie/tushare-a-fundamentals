@@ -12,6 +12,8 @@ eggs/
 .env
 .envrc
 .venv
+.venv/
+.direnv/
 
 # Ruff stuff:
 .ruff_cache/
@@ -23,6 +25,14 @@ coverage.xml
 
 # IDE-related
 .vscode/
+
+# config file
+config.yml
+
+# File ouputs
+out/
+*.parquet
+*.csv
 
 # Debugging purpose
 full_project_source.txt

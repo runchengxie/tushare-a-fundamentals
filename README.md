@@ -9,6 +9,10 @@
 - 依赖：tushare、pandas、pyyaml、numpy、python-dotenv
 - TuShare Token：优先读取环境变量 `TUSHARE_TOKEN`，也可通过 `--token` 传入
 
+（可选）自动加载环境
+cp .envrc.example .envrc
+direnv allow
+
 安装（可编辑模式）：
 ```
 pip install -e .

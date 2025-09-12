@@ -299,9 +299,18 @@ def _ensure_outdir(path: str) -> None:
 
 def save_tables(tables: Dict[str, pd.DataFrame], outdir: str, base: str, fmt: str) -> None:
     _ensure_outdir(outdir)
+    reports_dir = os.path.join(outdir, "reports")
+    csv_dir = os.path.join(outdir, "csv")
+    parquet_dir = os.path.join(outdir, "parquet")
+    _ensure_outdir(reports_dir)
+    _ensure_outdir(csv_dir)
+    _ensure_outdir(parquet_dir)
     for kind, df in tables.items():
         fname = f"{base}_{kind}.{fmt}"
-        fpath = os.path.join(outdir, fname)
+        if fmt == "csv":
+            fpath = os.path.join(csv_dir, fname)
+        else:
+            fpath = os.path.join(parquet_dir, fname)
         try:
             if fmt == "csv":
                 df.to_csv(fpath, index=False)
