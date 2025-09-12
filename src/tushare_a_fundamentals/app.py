@@ -51,13 +51,21 @@ def eprint(msg: str) -> None:
 
 
 def load_yaml(path: Optional[str]) -> dict:
-    if not path:
-        return {}
+    candidate = path
+    if not candidate:
+        # 若未显式传入 --config，则尝试自动加载当前目录下的 config.yml（若存在）
+        default_path = os.path.join(os.getcwd(), "config.yml")
+        if os.path.exists(default_path):
+            candidate = default_path
+        else:
+            return {}
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            return yaml.safe_load(f) or {}
+        with open(candidate, "r", encoding="utf-8") as f:
+            cfg = yaml.safe_load(f) or {}
+            print(f"已加载配置文件：{candidate}")
+            return cfg
     except FileNotFoundError:
-        eprint(f"错误：未找到配置文件 {path}")
+        eprint(f"错误：未找到配置文件 {candidate}")
         sys.exit(2)
     except Exception as exc:
         eprint(f"错误：读取配置文件失败：{exc}")
@@ -312,6 +320,8 @@ def save_tables(tables: Dict[str, pd.DataFrame], outdir: str, base: str, fmt: st
         else:
             fpath = os.path.join(parquet_dir, fname)
         try:
+            if os.path.exists(fpath):
+                print(f"已存在（覆盖）：{fpath}")
             if fmt == "csv":
                 df.to_csv(fpath, index=False)
             else:

@@ -17,10 +17,10 @@ except ImportError as e:
     print("请运行: uv sync")
     sys.exit(1)
 
-def test_api_credits(api_key: str) -> bool:
+def test_api_credits(api_key: str, source_name: str) -> bool:
     try:
-        print("\n=== 测试 TUSHARE_API_KEY ===")
-        print(f"API Key: {api_key[:10]}...")
+        print(f"\n=== 测试 {source_name} ===")
+        print(f"Token: {api_key[:10]}...")
 
         pro = ts.pro_api(token=api_key)
         df = pro.user(token=api_key)
@@ -29,7 +29,7 @@ def test_api_credits(api_key: str) -> bool:
             print("❌ 未获取到积分信息")
             return False
 
-        print("✅ API Key 有效")
+        print("✅ Token 有效")
         print("\n积分到期信息:")
         print(df.to_string(index=False))
 
@@ -59,12 +59,17 @@ def main() -> None:
 
     load_dotenv()
 
-    api_key = os.getenv("TUSHARE_API_KEY")
+    api_key = os.getenv("TUSHARE_TOKEN")
+    source_name = "TUSHARE_TOKEN"
     if not api_key:
-        print("❌ 未找到 TUSHARE_API_KEY 环境变量")
+        api_key = os.getenv("TUSHARE_API_KEY")
+        source_name = "TUSHARE_API_KEY"
+
+    if not api_key:
+        print("❌ 未找到环境变量：TUSHARE_TOKEN 或 TUSHARE_API_KEY")
         return
 
-    success = test_api_credits(api_key)
+    success = test_api_credits(api_key, source_name)
     print("\n" + "=" * 50)
     print(f"测试完成: {'成功' if success else '失败'}")
 
