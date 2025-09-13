@@ -11,3 +11,8 @@ prefix: "income"
 format: "parquet"
 skip_existing: false
 # token: "your_tushare_token"
+
+# 可选：分区化数据集写入
+# datasets_config: "configs/datasets.yaml"
+# dataset_root: "data_root"
+# no_only_latest: false  # 若为 true，则写入分区化数据集时包含历史版本

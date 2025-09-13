@@ -20,7 +20,12 @@ income-downloader = "tushare_a_fundamentals.cli:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
-packages = ["tushare_a_fundamentals", "tushare_a_fundamentals.meta"]
+packages = [
+    "tushare_a_fundamentals",
+    "tushare_a_fundamentals.meta",
+    "tushare_a_fundamentals.transforms",
+    "tushare_a_fundamentals.writers",
+]
 
 [tool.uv]
 python-preference = "only-managed"
