@@ -14,9 +14,11 @@
 
 ### 依赖
 
-- Python 3.10+
-- `pandas`, `pyarrow`, `PyYAML`, `python-dotenv`
-- 环境变量：`TUSHARE_TOKEN="<your token>"`
+* Python 3.10+
+
+* `pandas`, `pyarrow`, `PyYAML`, `python-dotenv`
+
+* 环境变量：`TUSHARE_TOKEN="<your token>"`
 
 ### 安装
 
@@ -31,23 +33,24 @@ uv sync
 ### 运行 CLI
 
 ```bash
-# 建议方式（入口脚本）
-income-downloader --help
+# 建议方式（入口脚本，推荐新名称）
+funda --help
 
 # 等价方式（模块运行）
 python -m tushare_a_fundamentals.cli --help
+
 ```
 
 示例：全市场批量（VIP）：
 
 ```bash
-income-downloader --mode quarter --years 3 --vip
+funda --mode quarter --years 3 --vip
 ```
 
 单票下载并输出 TTM：
 
 ```bash
-income-downloader --mode ttm --ts-code 600000.SH --years 5
+funda --mode ttm --ts-code 600000.SH --years 5
 ```
 
 ### 分区化数据集写入（可选）
@@ -55,7 +58,7 @@ income-downloader --mode ttm --ts-code 600000.SH --years 5
 若希望将“最新快照（或全量历史）”写入按年分区的 Parquet 数据集，可提供数据集配置并指定数据根目录：
 
 ```bash
-income-downloader --mode quarter --years 3 --vip \
+funda --mode quarter --years 3 --vip \
   --datasets-config configs/datasets.yaml \
   --dataset-root data_root
 ```

@@ -1,7 +1,7 @@
 [project]
 name = "tushare-a-fundamentals"
 version = "0.2.0"
-description = "A-share income statement downloader using TuShare"
+description = "A-share fundamentals downloader using TuShare"
 readme = "README.md"
 authors = [{ name = "Richard" }]
 license = "MIT"
@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [project.scripts]
-income-downloader = "tushare_a_fundamentals.cli:main"
+funda = "tushare_a_fundamentals.cli:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- `src/tushare_a_fundamentals/`: Library code. CLI entrypoint is `cli.py` (`income-downloader`).
+- `src/tushare_a_fundamentals/`: Library code. CLI entrypoint is `cli.py` (`funda`).
 - `tests/unit/` and `tests/integration/`: Pytest suites; see markers in `pyproject.toml`.
 - `tools/`: Helper scripts (e.g., `check_api_availability.py`).
 - `docs/`: Project docs.
@@ -12,7 +12,7 @@
 - Lint: `ruff check .`
 - Format: `black .` (check only: `black --check .`)
 - Run tests: `pytest` (coverage enabled). Subsets: `pytest -m unit`, `pytest -m integration`.
-- Run CLI: `income-downloader --help` or `python -m tushare_a_fundamentals.cli`.
+- Run CLI: `funda --help` or `python -m tushare_a_fundamentals.cli`.
 
 ## Coding Style & Naming Conventions
 - Python 3.10+; 4-space indentation; line length 88 (`black`, `ruff`).
