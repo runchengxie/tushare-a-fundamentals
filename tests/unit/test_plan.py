@@ -25,7 +25,7 @@ def test_plan_override():
 
 
 def test_plan_deprecated_alias(capfd):
-    p = appmod.plan_from_mode("quarterly")
+    p = appmod.plan_from_mode("quarter")
     assert p.periodicity == "quarterly"
     assert p.view == "quarter"
     err = capfd.readouterr().err
