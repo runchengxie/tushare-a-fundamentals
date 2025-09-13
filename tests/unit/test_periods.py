@@ -1,10 +1,7 @@
-import os
-import sys
 import pytest
+from tushare_a_fundamentals import cli as appmod
 
 pytestmark = pytest.mark.unit
-
-from tushare_a_fundamentals import cli as appmod
 
 
 def test_periods_years_annual():

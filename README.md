@@ -8,7 +8,8 @@
 
 * Python 3.10+
 
-* 依赖：tushare、pandas、pyyaml、numpy、python-dotenv
+* 依赖：tushare、pandas、pyyaml、numpy、python-dotenv、pyarrow（parquet 支持）
+  - 若环境中未自动安装，可执行 `pip install pyarrow`
 
 * TuShare Token：优先读取环境变量 `TUSHARE_TOKEN`，也可通过 `--token` 传入
   - 不使用 direnv 时，可复制并编辑 `.env`：`cp .env.example .env`
@@ -54,14 +55,17 @@ uv sync
 # 查看帮助
 income-downloader --help
 
-# 全市场季度，最近 40 季，优先单季口径
-income-downloader --mode quarterly --quarters 40 --vip --prefer-single-quarter
+# 全市场季度，最近 40 季，优先单季口径（默认 vip: true，批量路径调用 income_vip）
+income-downloader --mode quarter --quarters 40 --vip --prefer-single-quarter
+
+# 再次运行时若文件已存在并完整，可跳过下载
+income-downloader --mode quarter --quarters 40 --vip --skip-existing
 
 # 单票 TTM，最近 24 季
 income-downloader --mode ttm --ts-code 600000.SH --quarters 24
 
-# 年度，最近 12 年，保存 parquet
-income-downloader --mode annual --years 12 --vip --format parquet
+# 年度，最近 12 年（默认 parquet，需已安装 pyarrow）
+income-downloader --mode annual --years 12 --vip
 ```
 
 或直接从源码运行：
@@ -76,25 +80,23 @@ python3 -m tushare_a_fundamentals.cli --help
 
 关键配置项：
 
-* mode: annual | semiannual | quarterly | ttm
+* mode: annual | quarter | ttm（`quarterly` 为兼容别名，会打印弃用警告）
 * years 或 quarters：抓取范围（二选一）
 * ts_code：为空则全市场 VIP 路径（示例：`600000.SH`、`000001.SZ`）
-* vip: true|false：是否走 income_vip（全市场）
+* vip: true|false：是否走 income_vip（默认 true，批量路径调用 `income_vip`）
 * prefer_single_quarter: true|false：优先请求单季报表
+* skip_existing: true|false：若输出文件已包含所需 end_date，则跳过下载
 * fields：字段列表（包含标识列与流量列）
-* outdir / prefix / format(csv|parquet)
+* outdir / prefix / format（默认 parquet，示例配置中已设为 parquet）
 * token：可选，优先使用环境变量
 
 ## 输出产物
 
+文件会写到 `out/csv` 或 `out/parquet`，并按 `{prefix}_vip_{mode}_{kind}.{ext}`（全市场）或 `{prefix}_{ts_code}_{mode}_{kind}.{ext}`（单票）命名。
+
 * 原始：`*_raw.(csv|parquet)`（经去重、规范化 end_date）
-* 单季：`*_single.(csv|parquet)`（quarterly/ttm）
+* 单季：`*_single.(csv|parquet)`（quarter/ttm）
 * TTM：`*_ttm.(csv|parquet)`（ttm）
-
-命名：
-
-* 全市场：`{prefix}_vip_{mode}_{kind}.{ext}`
-* 单票：`{prefix}_{ts_code}_{mode}_{kind}.{ext}`
 
 ## 口径与处理规则（摘要）
 
