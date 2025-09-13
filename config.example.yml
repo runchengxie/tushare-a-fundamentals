@@ -1,5 +1,5 @@
 # Example configuration (please copy as config.yml and modify as needed)
-mode: quarter               # 
+mode: quarterly               # 
 years: 10
 # quarters: 40
 # ts_code: 600000.SH
