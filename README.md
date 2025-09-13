@@ -1,26 +1,8 @@
-# Tushare基本面数据批量下载工具
+# Tushare 基本面数据批量下载器（聚焦利润表）
 
-本项目实现 TuShare 基本面数据的分区化 Parquet 数据集与轻量状态管理。通过“按年分区 + 主键去重 + 最新快照标记”，支持长期增量与历史更正重写。本项目提供一个命令行脚本，基于 TuShare 批量/单票抓取中国 A 股上市公司基本面数据，并统一输出三种口径：年度、单季（非累计）、以及TTM。该脚本抓取的信息包括：
+本项目旨在实现“按年分区 + 主键去重 + 最新快照标记”的分区化 Parquet 数据集与轻量状态管理；并提供命令行脚本批量/单票抓取 A 股上市公司基本面数据，统一输出年度、单季（非累计）与 TTM 三种口径。
 
-* 利润表
-
-* 资产负债表（待完成）
-
-* 现金流量表（待完成）
-
-* 业绩预告（待完成）
-
-* 业绩快报（待完成）
-
-* 分红送股数据（待完成）
-
-* 财务指标数据（待完成）
-
-* 财务审计意见（待完成）
-
-* 主营业务构成（待完成）
-
-* 财报披露日期表（待完成）
+当前已实现并稳定可用：利润表（raw/单季/TTM）；其他数据集（资产负债表、现金流、业绩预告/快报、分红、指标、审计意见、主营构成、披露日期）为待办项。
 
 提示：所有命令行输出与错误信息均为中文；代码实现为英文。
 
@@ -28,98 +10,69 @@
 
 ### 依赖
 
-* Python 3.10+
-* `pyarrow`, `pandas`, `duckdb`, `rich`, `typer`
-* 环境变量：`TUSHARE_TOKEN="<your token>"`
+- Python 3.10+
+- `pandas`, `pyarrow`, `PyYAML`, `python-dotenv`
+- 环境变量：`TUSHARE_TOKEN="<your token>"`
 
 ### 安装
 
 ```bash
-# 使用pip包管理
-pip install . -e
+# 使用 pip 可编辑安装
+pip install -e .
 
-# 使用uv
+# 或使用 uv 安装项目与开发依赖
 uv sync
 ```
 
-### 配置
-
-编辑 `configs/datasets.yaml`，设定 `root`, `state_store` 以及各数据集的 `partition_by`、`primary_key`、`version_by` 等。
-
-### 常用命令
+### 运行 CLI
 
 ```bash
-# 全量初始化指定数据集（并发受限流保护）
-python -m etl.cli init --dataset income
+# 建议方式（入口脚本）
+income-downloader --help
 
-# 每日增量（自动计算缺口）
-python -m etl.cli daily --since 2020-01-01
-
-# 回填/重写历史分区
-python -m etl.cli rewrite --dataset income --year 2019
-
-# 合并小文件
-python -m etl.cli compact --dataset income --year 2022 --target-mb 128
-
-# 导出最新快照为单表
-python -m etl.cli materialize --dataset income --view latest --to data_root/materialized/income_latest.parquet
+# 等价方式（模块运行）
+python -m tushare_a_fundamentals.cli --help
 ```
 
-### CLI 选项要点
+示例：全市场批量（VIP）：
 
-* `--concurrency` 并发抓取数
+```bash
+income-downloader --mode quarter --years 3 --vip
+```
 
-* `--rate-limit` 每秒请求上限
+单票下载并输出 TTM：
 
-* `--since/--until` 限定抓取时间窗
+```bash
+income-downloader --mode ttm --ts-code 600000.SH --years 5
+```
 
-* `--dirty` 仅处理被标记为脏的分区
+### 分区化数据集写入（可选）
 
-* `--verify-only` 只做校验不写入
+若希望将“最新快照（或全量历史）”写入按年分区的 Parquet 数据集，可提供数据集配置并指定数据根目录：
+
+```bash
+income-downloader --mode quarter --years 3 --vip \
+  --datasets-config configs/datasets.yaml \
+  --dataset-root data_root
+```
+
+写入路径示例：`data_root/dataset=income/year=2023/part-*.parquet`
+
+注：目前仅对利润表 raw 表接入了分区化写入；`single/ttm` 仍按平铺文件输出。
+
+## 配置
+
+- `config.yml`：CLI 行为（模式、时间范围、输出目录、字段选择等）。
+- `configs/datasets.yaml`：数据湖规范（分区、主键、版本字段等）。
 
 ## 开发约定
 
-* 写入逻辑统一走 `writers/dataset_writer.py`，屏蔽分区与覆盖细节；
-
-* 去重逻辑集中在 `transforms/deduplicate.py`，输入主键与版本字段，输出 `is_latest`；
-
-* 状态更新由 `meta/state_store.py` 管理；
-
-* 任何 schema 变更需同步更新 `configs/datasets.yaml` 与 `MANIFEST.json`。
-
-## 数据质量校验
-
-* 主键非空率 100%；
-
-* 日期字段可解析且位于合理区间；
-
-* 最新快照内不应存在同主键多行；
-
-* 行数波动超过基线阈值需发出预警。
-
-## 项目工作流流程图设计
-
-```mermaid
-graph TD
-    A[Scheduler/CLI] -->|plan datasets| B(Ingestion Workers)
-    C[TuShare API] -->|fetch/transform<br>rate limit/retry| B
-    B -->|write partitions| D[Parquet Dataset(s)<br>data_root/...]
-    D -->|compact / overwrite dirty| E[State Store<br>SQLite/DuckDB]
-    E -->|read| F[Consumers<br>DuckDB/BI]
-```
+- 去重与最新快照标记：`src/tushare_a_fundamentals/transforms/deduplicate.py`
+- 分区化写入：`src/tushare_a_fundamentals/writers/dataset_writer.py`
+- 状态管理（雏形，尚未接入 CLI）：`src/tushare_a_fundamentals/meta/state_store.py`
 
 ## 常见问题
 
-* **为什么保留历史版本而不直接覆盖？** 便于追溯与审计，同时快照查询通过 `is_latest=1` 不受影响。
-
-* **小文件太多怎么办？** 调大批量写入条数或定期运行 `compact` 合并；
-
-* **字段漂移导致读失败？** 新增列应设为 nullable，读取时使用统一 schema 合并。
-
-## 故障恢复
-
-* 采集失败的分区不会更新状态表，下一轮会再次计划；
-
-* 标记 `dirty=1` 的分区必将被覆盖重写；
-
-* 若写入中断，遗留的临时文件名带 `.tmp`，下次启动会清理。
+- 为什么保留历史版本而不直接覆盖？便于追溯与审计，同时快照查询通过 `is_latest=1` 不受影响。
+- 小文件太多怎么办？可后续使用 compactor（计划中）定期合并文件。
+- 字段漂移导致读失败？新增列应设为 nullable，读取时使用统一 schema 合并。

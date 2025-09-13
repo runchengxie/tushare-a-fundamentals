@@ -9,8 +9,14 @@ import importlib
 from dataclasses import dataclass
 from typing import Literal
 from dotenv import load_dotenv
+from tushare_a_fundamentals.transforms.deduplicate import (
+    select_latest as _tx_select_latest,
+    mark_latest as _tx_mark_latest,
+)
+from tushare_a_fundamentals.writers.dataset_writer import write_partitioned_dataset
 
-load_dotenv()
+# 不在导入时自动加载 .env，避免测试环境被隐式污染。
+# 若需要本地读取 .env，可自行在 shell 中使用 direnv 或显式导出环境变量。
 if os.getenv("TUSHARE_API_KEY") and not os.getenv("TUSHARE_TOKEN"):
     os.environ["TUSHARE_TOKEN"] = os.getenv("TUSHARE_API_KEY")
 
@@ -150,6 +156,24 @@ def parse_cli() -> argparse.Namespace:
     p.add_argument("--format", choices=["csv", "parquet"])
     p.add_argument("--skip-existing", action="store_true")
     p.add_argument("--token", type=str)
+    # 可选：分区化数据集写入相关参数
+    p.add_argument(
+        "--datasets-config",
+        type=str,
+        default=None,
+        help="数据集配置文件，默认读取 configs/datasets.yaml",
+    )
+    p.add_argument(
+        "--dataset-root",
+        type=str,
+        default=None,
+        help="分区化数据集根目录，提供后将额外写入分区化数据集",
+    )
+    p.add_argument(
+        "--no-only-latest",
+        action="store_true",
+        help="写入分区化数据集时，包含历史版本而不仅是最新快照",
+    )
     return p.parse_args()
 
 
@@ -261,39 +285,38 @@ def _already_downloaded(
 
 
 def _select_latest(df: pd.DataFrame) -> pd.DataFrame:
-    if df.empty:
-        return df
-    df = df.copy()
-    for col in ["ann_date", "f_ann_date"]:
-        if col in df.columns:
-            df[col] = pd.to_datetime(df[col], errors="coerce")
-    if "end_date" in df.columns:
-        df["end_date"] = df["end_date"].astype(str).str.replace("-", "", regex=False)
-    sort_cols = []
-    if "report_type" in df.columns:
-        df["_rt_pref"] = (df["report_type"] == 1).astype(int)
-        sort_cols.append("_rt_pref")
-    if "update_flag" in df.columns:
-        df["_upd"] = (df["update_flag"].astype(str).str.upper() == "Y").astype(int)
-        sort_cols.append("_upd")
-    sort_cols += ["f_ann_date", "ann_date"]
-    sort_cols = [c for c in sort_cols if c in df.columns]
-    df = df.sort_values(sort_cols, ascending=[False] * len(sort_cols))
-    keep_cols = list(
-        dict.fromkeys(
-            [
-                *(
-                    DEFAULT_FIELDS
-                    if not set(DEFAULT_FIELDS).issubset(df.columns)
-                    else df.columns.tolist()
-                )
-            ]
+    """后向兼容：委托给 transforms.deduplicate.select_latest。"""
+    got = _tx_select_latest(df, group_keys=("ts_code", "end_date"))
+    if not got.empty:
+        keep_cols = list(
+            dict.fromkeys(
+                [
+                    *(
+                        DEFAULT_FIELDS
+                        if not set(DEFAULT_FIELDS).issubset(got.columns)
+                        else got.columns.tolist()
+                    )
+                ]
+            )
         )
-    )
-    grp_keys = ["ts_code", "end_date"]
-    grp_keys = [k for k in grp_keys if k in df.columns]
-    dedup = df.groupby(grp_keys, as_index=False).head(1)
-    return dedup[keep_cols] if set(keep_cols).issubset(dedup.columns) else dedup
+        if set(keep_cols).issubset(got.columns):
+            got = got[keep_cols]
+    return got
+
+
+def _load_datasets_config(path: Optional[str]) -> dict:
+    if path is None:
+        candidate = os.path.join(os.getcwd(), "configs", "datasets.yaml")
+        if os.path.exists(candidate):
+            path = candidate
+        else:
+            return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return yaml.safe_load(f) or {}
+    except Exception as exc:
+        eprint(f"警告：读取数据集配置失败（{path}）：{exc}")
+        return {}
 
 
 def _coerce_numeric(df: pd.DataFrame, cols: List[str]) -> pd.DataFrame:
@@ -486,6 +509,9 @@ def main():
         "format": "parquet",
         "skip_existing": False,
         "token": None,
+        "datasets_config": None,
+        "dataset_root": None,
+        "no_only_latest": False,
     }
     cli_overrides = {
         "mode": args.mode,
@@ -504,6 +530,9 @@ def main():
         "format": args.format,
         "skip_existing": args.skip_existing,
         "token": args.token,
+        "datasets_config": args.datasets_config,
+        "dataset_root": args.dataset_root,
+        "no_only_latest": args.no_only_latest,
     }
     cfg = merge_config(cli_overrides, cfg_file, defaults)
 
@@ -540,6 +569,29 @@ def main():
             fields=fields,
         )
         save_tables(tables, outdir, base, fmt)
+        # 分区化数据集写入（可选）
+        if cfg.get("dataset_root"):
+            ds_cfg = _load_datasets_config(cfg.get("datasets_config"))
+            dataset = "income"
+            ds = (ds_cfg.get("datasets", {}) or {}).get(dataset, {}) if ds_cfg else {}
+            partition_by = ds.get("partition_by", "year:end_date")
+            primary_key = ds.get("primary_key", ["ts_code", "end_date", "report_type"])
+            version_by = ds.get("version_by", ["ann_date", "f_ann_date"])
+            only_latest = not cfg.get("no_only_latest", False)
+            raw_df = tables.get("raw")
+            if raw_df is not None and not raw_df.empty:
+                raw_df = _tx_mark_latest(raw_df)
+                written = write_partitioned_dataset(
+                    raw_df,
+                    cfg["dataset_root"],
+                    dataset,
+                    partition_by,
+                    primary_key,
+                    version_by,
+                    only_latest=only_latest,
+                )
+                for p in written:
+                    print(f"已写入分区文件：{p}")
     else:
         if cfg.get("vip") is False:
             eprint("错误：未提供 --ts-code 且未启用 --vip，无法进行全市场批量。")
@@ -564,6 +616,28 @@ def main():
             prefer_single_quarter=cfg.get("prefer_single_quarter", True),
         )
         save_tables(tables, outdir, base, fmt)
+        if cfg.get("dataset_root"):
+            ds_cfg = _load_datasets_config(cfg.get("datasets_config"))
+            dataset = "income"
+            ds = (ds_cfg.get("datasets", {}) or {}).get(dataset, {}) if ds_cfg else {}
+            partition_by = ds.get("partition_by", "year:end_date")
+            primary_key = ds.get("primary_key", ["ts_code", "end_date", "report_type"])
+            version_by = ds.get("version_by", ["ann_date", "f_ann_date"])
+            only_latest = not cfg.get("no_only_latest", False)
+            raw_df = tables.get("raw")
+            if raw_df is not None and not raw_df.empty:
+                raw_df = _tx_mark_latest(raw_df)
+                written = write_partitioned_dataset(
+                    raw_df,
+                    cfg["dataset_root"],
+                    dataset,
+                    partition_by,
+                    primary_key,
+                    version_by,
+                    only_latest=only_latest,
+                )
+                for p in written:
+                    print(f"已写入分区文件：{p}")
 
 
 if __name__ == "__main__":
