@@ -4,61 +4,25 @@
 
 * 利润表
 
-* 资产负债表
+* 资产负债表（待完成）
 
-* 现金流量表
+* 现金流量表（待完成）
 
-* 业绩预告
+* 业绩预告（待完成）
 
-* 业绩快报
+* 业绩快报（待完成）
 
-* 分红送股数据
+* 分红送股数据（待完成）
 
-* 财务指标数据
+* 财务指标数据（待完成）
 
-* 财务审计意见
+* 财务审计意见（待完成）
 
-* 主营业务构成
+* 主营业务构成（待完成）
 
-* 财报披露日期表
+* 财报披露日期表（待完成）
 
 提示：所有命令行输出与错误信息均为中文；代码实现为英文。
-
-## 设计蓝图
-
-```
-             +------------------+
-             |  Scheduler/CLI   |
-             +---------+--------+
-                       |
-                plan datasets
-                       v
-+-----------+   fetch/transform   +-------------+
-| TuShare   +--------------------->|  Ingestion  |
-|  API      |   rate limit/retry  |  Workers    |
-+-----------+                      +------+------+
-                                          |
-                                   write partitions
-                                          v
-                                +---------+----------+
-                                | Parquet Dataset(s) |
-                                |  data_root/...     |
-                                +---------+----------+
-                                          |
-                               compact / overwrite dirty
-                                          v
-                                 +--------+--------+
-                                 |  State Store    |
-                                 | SQLite/DuckDB   |
-                                 +--------+--------+
-                                          |
-                                         read
-                                          v
-                                   +------+------+
-                                   |  Consumers  |
-                                   |  DuckDB/BI  |
-                                   +-------------+
-```
 
 ## 快速开始
 
@@ -132,6 +96,17 @@ python -m etl.cli materialize --dataset income --view latest --to data_root/mate
 * 最新快照内不应存在同主键多行；
 
 * 行数波动超过基线阈值需发出预警。
+
+## 项目工作流流程图设计
+
+```mermaid
+graph TD
+    A[Scheduler/CLI] -->|plan datasets| B(Ingestion Workers)
+    C[TuShare API] -->|fetch/transform<br>rate limit/retry| B
+    B -->|write partitions| D[Parquet Dataset(s)<br>data_root/...]
+    D -->|compact / overwrite dirty| E[State Store<br>SQLite/DuckDB]
+    E -->|read| F[Consumers<br>DuckDB/BI]
+```
 
 ## 常见问题
 
