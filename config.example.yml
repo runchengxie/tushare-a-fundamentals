@@ -8,5 +8,5 @@ prefer_single_quarter: true
 fields: "ts_code,ann_date,f_ann_date,end_date,report_type,comp_type,update_flag,total_revenue,revenue,total_cogs,operate_profit,total_profit,income_tax,n_income,n_income_attr_p,ebit,ebitda,rd_exp"
 outdir: "out"
 prefix: "income"
-format: "csv"
+format: "parquet"
 # token: "your_tushare_token"
