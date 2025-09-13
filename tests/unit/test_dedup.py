@@ -5,7 +5,7 @@ import pytest
 
 pytestmark = pytest.mark.unit
 
-from tushare_a_fundamentals import app as appmod
+from tushare_a_fundamentals import cli as appmod
 
 
 def test_select_latest_priority():

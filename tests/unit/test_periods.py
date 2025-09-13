@@ -4,7 +4,7 @@ import pytest
 
 pytestmark = pytest.mark.unit
 
-from tushare_a_fundamentals import app as appmod
+from tushare_a_fundamentals import cli as appmod
 
 
 def test_periods_years_annual():
