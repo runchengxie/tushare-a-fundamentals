@@ -55,7 +55,8 @@ select = ["E", "F", "W", "C90"]
 max-complexity = 10
 
 [tool.pytest.ini_options]
-addopts = ["--cov=src", "--cov-report=term-missing"]
+# 默认不强制开启覆盖率插件，避免环境缺少 pytest-cov 时失败
+addopts = []
 markers = [
     "unit: unit tests",
     "integration: integration tests",
