@@ -27,7 +27,8 @@ coverage.xml
 .vscode/
 
 # config file
-config.yml
+config.yaml
+configs/datasets.yaml
 
 # File ouputs
 out/
@@ -39,4 +40,3 @@ meta/state.db
 
 # Debugging purpose
 full_project_source.txt
-

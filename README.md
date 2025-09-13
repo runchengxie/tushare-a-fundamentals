@@ -119,9 +119,14 @@ funda --years 3 \
 
 ## 配置
 
-* `config.yml`：CLI 行为（模式、时间范围、输出目录、字段选择等）。
+- `config.yml`（根目录）：CLI 行为（模式、时间范围、输出目录、字段选择等）。
+  - 初次使用：从模板复制一份并按需修改
+    - `cp config.example.yaml config.yml`
 
-* `configs/datasets.yaml`：数据湖规范（分区、主键、版本字段等）。
+- `configs/datasets.yaml`（本地）：数据湖规范（分区、主键、版本字段等）。
+  - 初次使用：从模板复制一份并按需修改
+    - `cp configs/datasets.example.yaml configs/datasets.yaml`
+  - 仓库已忽略 `configs/datasets.yaml`，避免彼此覆盖本地路径等私有配置。
 
 ## 开发约定
 
