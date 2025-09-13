@@ -5,10 +5,15 @@
 - `tests/unit/` and `tests/integration/`: Pytest suites; see markers in `pyproject.toml`.
 - `tools/`: Helper scripts (e.g., `check_api_availability.py`).
 - `docs/`: Project docs.
-- Root configs: `pyproject.toml`, `config.example.yml`, `.env.example`, `.envrc.example`.
+- Root configs: `pyproject.toml`, `config.example.yaml`, `.env.example`, `.envrc.example`.
+- Dataset config: `configs/datasets.example.yaml` (copy to `configs/datasets.yaml` locally; real file is gitignored)
+- Dataset config: `configs/datasets.example.yaml` (copy to `configs/datasets.yaml` locally; real file is gitignored)
 
 ## Build, Test, and Development Commands
 - Setup (recommended): `uv sync` (installs deps + dev tools). Alternative: `pip install -e .` then install `pytest ruff black pytest-cov`.
+- Prepare local configs:
+  - `cp config.example.yaml config.yml`
+  - `cp configs/datasets.example.yaml configs/datasets.yaml`
 - Lint: `ruff check .`
 - Format: `black .` (check only: `black --check .`)
 - Run tests: `pytest` (coverage enabled). Subsets: `pytest -m unit`, `pytest -m integration`.
@@ -18,7 +23,7 @@
 - Python 3.10+; 4-space indentation; line length 88 (`black`, `ruff`).
 - Names: `snake_case` for modules/functions/vars, `UPPER_SNAKE` for constants, `PascalCase` for classes.
 - Prefer type hints and small, pure functions. Keep user-facing messages in Chinese, code identifiers in English.
-- Update `config.example.yml` and README when adding CLI options or output files.
+- Update `config.example.yaml` and README when adding CLI options or output files.
 
 ## Testing Guidelines
 - Framework: `pytest` with markers: `unit`, `integration`.
