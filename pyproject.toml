@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [project.scripts]
-income-downloader = "tushare_a_fundamentals.app:main"
+income-downloader = "tushare_a_fundamentals.cli:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

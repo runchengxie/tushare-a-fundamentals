@@ -36,7 +36,7 @@ income-downloader --help
 或直接从源码运行：
 
 ```bash
-python3 -m tushare_a_fundamentals.app --help
+python3 -m tushare_a_fundamentals.cli --help
 ```
 
 ## 配置文件
@@ -72,7 +72,7 @@ python3 -m tushare_a_fundamentals.app --help
     或：
 
     ```
-    python3 -m tushare_a_fundamentals.app --mode quarterly --quarters 40 --vip --prefer-single-quarter
+    python3 -m tushare_a_fundamentals.cli --mode quarterly --quarters 40 --vip --prefer-single-quarter
     ```
 
 * 全市场，年度，近 12 年，存 parquet：

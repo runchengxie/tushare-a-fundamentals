@@ -39,11 +39,40 @@ DEFAULT_FIELDS = IDENT_FIELDS + FLOW_FIELDS
 
 PERIOD_NODES = ["0331", "0630", "0930", "1231"]
 
+
 class Mode:
     ANNUAL = "annual"
+    QUARTER = "quarter"
+    TTM = "ttm"
+    # legacy aliases
     SEMIANNUAL = "semiannual"
     QUARTERLY = "quarterly"
-    TTM = "ttm"
+
+
+from dataclasses import dataclass
+from typing import Literal
+
+
+@dataclass
+class Plan:
+    periodicity: Literal["annual", "semiannual", "quarterly"]
+    view: Literal["reported", "quarter", "ttm"]
+
+
+MODE_MAP = {
+    Mode.ANNUAL: Plan("annual", "reported"),
+    Mode.QUARTER: Plan("quarterly", "quarter"),
+    Mode.TTM: Plan("quarterly", "ttm"),
+}
+
+
+def plan_from_mode(mode: str, periodicity: str | None = None, view: str | None = None) -> Plan:
+    m = mode.lower()
+    if m == Mode.QUARTERLY:
+        eprint("警告：'quarterly' 模式已弃用，请使用 'quarter'")
+        m = Mode.QUARTER
+    p = MODE_MAP[m]
+    return Plan(periodicity or p.periodicity, view or p.view)
 
 
 def eprint(msg: str) -> None:
@@ -99,7 +128,7 @@ def init_pro_api(token: Optional[str]):
 def parse_cli() -> argparse.Namespace:
     p = argparse.ArgumentParser(prog="income-downloader", description="批量下载A股利润表")
     p.add_argument("--config", type=str, default=None)
-    p.add_argument("--mode", choices=[Mode.ANNUAL, Mode.SEMIANNUAL, Mode.QUARTERLY, Mode.TTM])
+    p.add_argument("--mode", choices=[Mode.ANNUAL, Mode.QUARTER, Mode.TTM, Mode.QUARTERLY])
     p.add_argument("--years", type=int)
     p.add_argument("--quarters", type=int)
     p.add_argument("--ts-code", type=str)
@@ -207,17 +236,14 @@ def _diff_to_single(df: pd.DataFrame) -> pd.DataFrame:
     df["year"] = df["end_date"].str.slice(0, 4)
     df["node"] = df["end_date"].str.slice(4, 8)
     df = df.sort_values(["ts_code", "year", "node"])  # ascending
+    out = df.copy()
     for col in FLOW_FIELDS:
         if col in df.columns:
-            df[col] = df.groupby(["ts_code", "year"], as_index=False)[col].diff()
-    q1_mask = df["node"] == "0331"
-    for col in FLOW_FIELDS:
-        if col in df.columns:
-            orig = df[col].copy()
-            df.loc[q1_mask, col] = orig.where(q1_mask, None)
-            df.loc[q1_mask, col] = df.loc[q1_mask, col].fillna(df.loc[q1_mask, col].map(lambda x: x))
-    df = df.drop(columns=["year", "node"]) 
-    return df
+            out[col] = df.groupby(["ts_code", "year"], as_index=False)[col].diff()
+            q1_mask = out["node"] == "0331"
+            out.loc[q1_mask, col] = out.loc[q1_mask, col].fillna(df.loc[q1_mask, col])
+    out = out.drop(columns=["year", "node"])
+    return out
 
 
 def _rolling_ttm(single_df: pd.DataFrame) -> pd.DataFrame:
@@ -236,7 +262,7 @@ def fetch_income_bulk(pro, periods: List[str], mode: str, fields: str, prefer_si
     all_rows: List[pd.DataFrame] = []
     for per in periods:
         params = {"period": per}
-        if prefer_single_quarter and mode in (Mode.QUARTERLY, Mode.TTM):
+        if prefer_single_quarter and mode in (Mode.QUARTER, Mode.TTM):
             params["report_type"] = 2
         try:
             df = _retry_call(pro.income_vip, {"fields": fields, **params})
@@ -254,7 +280,7 @@ def fetch_income_bulk(pro, periods: List[str], mode: str, fields: str, prefer_si
     raw = _select_latest(raw)
     raw = _coerce_numeric(raw, FLOW_FIELDS)
     tables["raw"] = raw
-    if mode in (Mode.QUARTERLY, Mode.TTM):
+    if mode in (Mode.QUARTER, Mode.TTM):
         if prefer_single_quarter:
             single = raw.copy()
         else:
@@ -292,7 +318,7 @@ def fetch_single_stock(pro, ts_code: str, years: Optional[int], quarters: Option
     raw = _select_latest(raw)
     raw = _coerce_numeric(raw, FLOW_FIELDS)
     tables: Dict[str, pd.DataFrame] = {"raw": raw}
-    if mode in (Mode.QUARTERLY, Mode.TTM):
+    if mode in (Mode.QUARTER, Mode.TTM):
         single = _diff_to_single(raw)
         tables["single"] = single
     if mode == Mode.TTM:
@@ -336,7 +362,7 @@ def main():
     args = parse_cli()
     cfg_file = load_yaml(args.config)
     defaults = {
-        "mode": Mode.QUARTERLY,
+        "mode": Mode.QUARTER,
         "years": 10,
         "quarters": None,
         "ts_code": None,

@@ -1,4 +1,5 @@
 import os
+import sys
 import yaml
 import subprocess
 import pytest
@@ -6,7 +7,7 @@ import pytest
 pytestmark = pytest.mark.integration
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-APP = os.path.join(ROOT, "src", "app.py")
+ENV = {**os.environ, "PYTHONPATH": os.path.join(ROOT, "src")}
 
 
 def test_cli_overrides_config(tmp_path):
@@ -15,8 +16,9 @@ def test_cli_overrides_config(tmp_path):
     cfg_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
     code = subprocess.run(
         [
-            "python3",
-            APP,
+            sys.executable,
+            "-m",
+            "tushare_a_fundamentals.cli",
             "--config",
             str(cfg_path),
             "--mode",
@@ -27,5 +29,6 @@ def test_cli_overrides_config(tmp_path):
         ],
         capture_output=True,
         text=True,
+        env=ENV,
     )
     assert code.returncode != 2
