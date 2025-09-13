@@ -8,7 +8,6 @@ from typing import List, Dict, Optional
 import importlib
 from dataclasses import dataclass
 from typing import Literal
-from dotenv import load_dotenv
 from tushare_a_fundamentals.transforms.deduplicate import (
     select_latest as _tx_select_latest,
     mark_latest as _tx_mark_latest,
@@ -137,7 +136,7 @@ def init_pro_api(token: Optional[str]):
 
 def parse_cli() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        prog="income-downloader", description="批量下载A股利润表"
+        description="批量下载A股基本面数据"
     )
     p.add_argument("--config", type=str, default=None)
     p.add_argument(

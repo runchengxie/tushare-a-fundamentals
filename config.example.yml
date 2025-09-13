@@ -1,5 +1,5 @@
-# 示例配置（请复制为 config.yml 并按需修改）
-mode: quarter
+# Example configuration (please copy as config.yml and modify as needed)
+mode: quarter               # 
 years: 10
 # quarters: 40
 # ts_code: 600000.SH
@@ -12,7 +12,7 @@ format: "parquet"
 skip_existing: false
 # token: "your_tushare_token"
 
-# 可选：分区化数据集写入
+# Optional: Partitioned dataset writing
 # datasets_config: "configs/datasets.yaml"
 # dataset_root: "data_root"
-# no_only_latest: false  # 若为 true，则写入分区化数据集时包含历史版本
+# no_only_latest: false  # If true, historical versions will be included when writing partitioned datasets
