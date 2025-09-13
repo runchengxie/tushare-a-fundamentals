@@ -4,7 +4,10 @@ import sys
 import time
 import yaml
 import pandas as pd
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional
+import importlib
+from dataclasses import dataclass
+from typing import Literal
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -49,10 +52,6 @@ class Mode:
     QUARTERLY = "quarterly"
 
 
-from dataclasses import dataclass
-from typing import Literal
-
-
 @dataclass
 class Plan:
     periodicity: Literal["annual", "semiannual", "quarterly"]
@@ -66,7 +65,9 @@ MODE_MAP = {
 }
 
 
-def plan_from_mode(mode: str, periodicity: str | None = None, view: str | None = None) -> Plan:
+def plan_from_mode(
+    mode: str, periodicity: str | None = None, view: str | None = None
+) -> Plan:
     m = mode.lower()
     if m == Mode.QUARTERLY:
         eprint("警告：'quarterly' 模式已弃用，请使用 'quarter'")
@@ -113,10 +114,13 @@ def init_pro_api(token: Optional[str]):
     token_env = os.getenv("TUSHARE_TOKEN")
     tok = token or token_env
     if not tok:
-        eprint("错误：缺少 TuShare token。请通过环境变量 TUSHARE_TOKEN 或 --token 提供。")
+        eprint(
+            "错误：缺少 TuShare token。请通过环境变量 TUSHARE_TOKEN 或 --token 提供。"
+        )
         sys.exit(2)
     try:
         import tushare as ts
+
         ts.set_token(tok)
         pro = ts.pro_api()
         return pro
@@ -126,9 +130,13 @@ def init_pro_api(token: Optional[str]):
 
 
 def parse_cli() -> argparse.Namespace:
-    p = argparse.ArgumentParser(prog="income-downloader", description="批量下载A股利润表")
+    p = argparse.ArgumentParser(
+        prog="income-downloader", description="批量下载A股利润表"
+    )
     p.add_argument("--config", type=str, default=None)
-    p.add_argument("--mode", choices=[Mode.ANNUAL, Mode.QUARTER, Mode.TTM, Mode.QUARTERLY])
+    p.add_argument(
+        "--mode", choices=[Mode.ANNUAL, Mode.QUARTER, Mode.TTM, Mode.QUARTERLY]
+    )
     p.add_argument("--years", type=int)
     p.add_argument("--quarters", type=int)
     p.add_argument("--ts-code", type=str)
@@ -140,6 +148,7 @@ def parse_cli() -> argparse.Namespace:
     p.add_argument("--outdir", type=str)
     p.add_argument("--prefix", type=str)
     p.add_argument("--format", choices=["csv", "parquet"])
+    p.add_argument("--skip-existing", action="store_true")
     p.add_argument("--token", type=str)
     return p.parse_args()
 
@@ -148,8 +157,13 @@ def periods_for_mode_by_years(years: int, mode: str) -> List[str]:
     if years <= 0:
         return []
     from datetime import date
+
     cur_year = date.today().year
-    nodes = ["1231"] if mode == Mode.ANNUAL else (["0630", "1231"] if mode == Mode.SEMIANNUAL else PERIOD_NODES)
+    nodes = (
+        ["1231"]
+        if mode == Mode.ANNUAL
+        else (["0630", "1231"] if mode == Mode.SEMIANNUAL else PERIOD_NODES)
+    )
     out: List[str] = []
     for y in range(cur_year - years + 1, cur_year + 1):
         for n in nodes:
@@ -161,9 +175,11 @@ def periods_by_quarters(quarters: int) -> List[str]:
     if quarters <= 0:
         return []
     from datetime import date
+
     y, m = date.today().year, date.today().month
     if m <= 3:
-        node = "1231"; y -= 1
+        node = "1231"
+        y -= 1
     elif m <= 6:
         node = "0331"
     elif m <= 9:
@@ -188,11 +204,60 @@ def _retry_call(func, kwargs, max_tries=5, base_sleep=0.8):
     for i in range(max_tries):
         try:
             return func(**kwargs)
-        except Exception as exc:
+        except Exception:
             if i == max_tries - 1:
                 raise
-            time.sleep(base_sleep * (2 ** i))
+            time.sleep(base_sleep * (2**i))
     return None
+
+
+def _concat_non_empty(dfs: List[pd.DataFrame]) -> pd.DataFrame:
+    """Concatenate DataFrames after dropping empty or all-NA ones."""
+    non_empty = [df for df in dfs if not df.dropna(how="all").empty]
+    if not non_empty:
+        return pd.DataFrame()
+    return pd.concat(non_empty, ignore_index=True)
+
+
+def _check_parquet_dependency() -> bool:
+    """Return True if a parquet engine (pyarrow/fastparquet) is available."""
+    for name in ("pyarrow", "fastparquet"):
+        try:
+            importlib.import_module(name)
+            return True
+        except ModuleNotFoundError:
+            continue
+    return False
+
+
+def _kinds_for_mode(mode: str) -> List[str]:
+    kinds = ["raw"]
+    if mode in (Mode.QUARTER, Mode.TTM):
+        kinds.append("single")
+    if mode == Mode.TTM:
+        kinds.append("ttm")
+    return kinds
+
+
+def _already_downloaded(
+    outdir: str, base: str, fmt: str, periods: List[str], kinds: List[str]
+) -> bool:
+    fmt_dir = "csv" if fmt == "csv" else "parquet"
+    for kind in kinds:
+        path = os.path.join(outdir, fmt_dir, f"{base}_{kind}.{fmt}")
+        if not os.path.exists(path):
+            return False
+        try:
+            if fmt == "csv":
+                df = pd.read_csv(path, usecols=["end_date"])
+            else:
+                df = pd.read_parquet(path, columns=["end_date"])
+        except Exception:
+            return False
+        existing = set(df["end_date"].astype(str))
+        if not set(periods).issubset(existing):
+            return False
+    return True
 
 
 def _select_latest(df: pd.DataFrame) -> pd.DataFrame:
@@ -214,7 +279,17 @@ def _select_latest(df: pd.DataFrame) -> pd.DataFrame:
     sort_cols += ["f_ann_date", "ann_date"]
     sort_cols = [c for c in sort_cols if c in df.columns]
     df = df.sort_values(sort_cols, ascending=[False] * len(sort_cols))
-    keep_cols = list(dict.fromkeys([*(DEFAULT_FIELDS if not set(DEFAULT_FIELDS).issubset(df.columns) else df.columns.tolist())]))
+    keep_cols = list(
+        dict.fromkeys(
+            [
+                *(
+                    DEFAULT_FIELDS
+                    if not set(DEFAULT_FIELDS).issubset(df.columns)
+                    else df.columns.tolist()
+                )
+            ]
+        )
+    )
     grp_keys = ["ts_code", "end_date"]
     grp_keys = [k for k in grp_keys if k in df.columns]
     dedup = df.groupby(grp_keys, as_index=False).head(1)
@@ -253,11 +328,20 @@ def _rolling_ttm(single_df: pd.DataFrame) -> pd.DataFrame:
     df = df.sort_values(["ts_code", "end_date"])  # end_date already sortable
     for col in FLOW_FIELDS:
         if col in df.columns:
-            df[col] = df.groupby("ts_code", as_index=False)[col].transform(lambda s: s.rolling(4, min_periods=4).sum())
+            df[col] = df.groupby("ts_code", as_index=False)[col].transform(
+                lambda s: s.rolling(4, min_periods=4).sum()
+            )
     return df
 
 
-def fetch_income_bulk(pro, periods: List[str], mode: str, fields: str, prefer_single_quarter: bool) -> Dict[str, pd.DataFrame]:
+def fetch_income_bulk(
+    pro, periods: List[str], mode: str, fields: str, prefer_single_quarter: bool
+) -> Dict[str, pd.DataFrame]:
+    """Fetch multiple periods via income_vip and return processed tables.
+
+    Empty or all-NA responses are skipped before concatenation to avoid
+    pandas FutureWarning.
+    """
     tables: Dict[str, pd.DataFrame] = {}
     all_rows: List[pd.DataFrame] = []
     for per in periods:
@@ -276,7 +360,10 @@ def fetch_income_bulk(pro, periods: List[str], mode: str, fields: str, prefer_si
     if not all_rows:
         eprint("错误：未获取到任何数据")
         sys.exit(3)
-    raw = pd.concat(all_rows, ignore_index=True)
+    raw = _concat_non_empty(all_rows)
+    if raw.empty:
+        eprint("错误：未获取到任何数据")
+        sys.exit(3)
     raw = _select_latest(raw)
     raw = _coerce_numeric(raw, FLOW_FIELDS)
     tables["raw"] = raw
@@ -287,12 +374,28 @@ def fetch_income_bulk(pro, periods: List[str], mode: str, fields: str, prefer_si
             single = _diff_to_single(raw)
         tables["single"] = single
     if mode == Mode.TTM:
-        ttm = _rolling_ttm(tables["single"]) if "single" in tables else _rolling_ttm(_diff_to_single(raw))
+        ttm = (
+            _rolling_ttm(tables["single"])
+            if "single" in tables
+            else _rolling_ttm(_diff_to_single(raw))
+        )
         tables["ttm"] = ttm
     return tables
 
 
-def fetch_single_stock(pro, ts_code: str, years: Optional[int], quarters: Optional[int], mode: str, fields: str) -> Dict[str, pd.DataFrame]:
+def fetch_single_stock(
+    pro,
+    ts_code: str,
+    years: Optional[int],
+    quarters: Optional[int],
+    mode: str,
+    fields: str,
+) -> Dict[str, pd.DataFrame]:
+    """Fetch income statements for a single stock.
+
+    Empty or all-NA responses are skipped before concatenation to avoid
+    pandas FutureWarning.
+    """
     if quarters and quarters > 0:
         periods = periods_by_quarters(quarters)
     else:
@@ -314,7 +417,10 @@ def fetch_single_stock(pro, ts_code: str, years: Optional[int], quarters: Option
     if not all_rows:
         eprint("错误：未获取到任何数据")
         sys.exit(3)
-    raw = pd.concat(all_rows, ignore_index=True)
+    raw = _concat_non_empty(all_rows)
+    if raw.empty:
+        eprint("错误：未获取到任何数据")
+        sys.exit(3)
     raw = _select_latest(raw)
     raw = _coerce_numeric(raw, FLOW_FIELDS)
     tables: Dict[str, pd.DataFrame] = {"raw": raw}
@@ -322,7 +428,11 @@ def fetch_single_stock(pro, ts_code: str, years: Optional[int], quarters: Option
         single = _diff_to_single(raw)
         tables["single"] = single
     if mode == Mode.TTM:
-        ttm = _rolling_ttm(tables["single"]) if "single" in tables else _rolling_ttm(_diff_to_single(raw))
+        ttm = (
+            _rolling_ttm(tables["single"])
+            if "single" in tables
+            else _rolling_ttm(_diff_to_single(raw))
+        )
         tables["ttm"] = ttm
     return tables
 
@@ -331,7 +441,9 @@ def _ensure_outdir(path: str) -> None:
     os.makedirs(path, exist_ok=True)
 
 
-def save_tables(tables: Dict[str, pd.DataFrame], outdir: str, base: str, fmt: str) -> None:
+def save_tables(
+    tables: Dict[str, pd.DataFrame], outdir: str, base: str, fmt: str
+) -> None:
     _ensure_outdir(outdir)
     reports_dir = os.path.join(outdir, "reports")
     csv_dir = os.path.join(outdir, "csv")
@@ -371,20 +483,26 @@ def main():
         "fields": ",".join(DEFAULT_FIELDS),
         "outdir": "out",
         "prefix": "income",
-        "format": "csv",
+        "format": "parquet",
+        "skip_existing": False,
         "token": None,
     }
     cli_overrides = {
         "mode": args.mode,
         "years": args.years,
         "quarters": args.quarters,
-        "ts_code": args["ts_code"] if isinstance(args, dict) and "ts_code" in args else args.ts_code,
+        "ts_code": (
+            args["ts_code"]
+            if isinstance(args, dict) and "ts_code" in args
+            else args.ts_code
+        ),
         "vip": (True if args.vip else (False if args.no_vip else None)),
         "prefer_single_quarter": args.prefer_single_quarter,
         "fields": args.fields,
         "outdir": args.outdir,
         "prefix": args.prefix,
         "format": args.format,
+        "skip_existing": args.skip_existing,
         "token": args.token,
     }
     cfg = merge_config(cli_overrides, cfg_file, defaults)
@@ -394,11 +512,25 @@ def main():
     mode = cfg["mode"]
     fields = cfg["fields"]
     fmt = cfg["format"]
+    if fmt == "parquet" and not _check_parquet_dependency():
+        eprint("警告：缺少 pyarrow 或 fastparquet，已回退到 csv 格式")
+        fmt = "csv"
     outdir = cfg["outdir"]
     prefix = cfg["prefix"]
 
     if cfg.get("ts_code"):
         ts_code = cfg["ts_code"]
+        if cfg.get("quarters") and cfg["quarters"] > 0:
+            periods = periods_by_quarters(cfg["quarters"])
+        else:
+            periods = periods_for_mode_by_years(cfg["years"], mode)
+        base = f"{prefix}_{ts_code}_{mode}"
+        kinds = _kinds_for_mode(mode)
+        if cfg.get("skip_existing") and _already_downloaded(
+            outdir, base, fmt, periods, kinds
+        ):
+            print("已存在所需数据，跳过下载")
+            return
         tables = fetch_single_stock(
             pro,
             ts_code=ts_code,
@@ -407,13 +539,23 @@ def main():
             mode=mode,
             fields=fields,
         )
-        base = f"{prefix}_{ts_code}_{mode}"
         save_tables(tables, outdir, base, fmt)
     else:
         if cfg.get("vip") is False:
             eprint("错误：未提供 --ts-code 且未启用 --vip，无法进行全市场批量。")
             sys.exit(2)
-        periods = periods_by_quarters(cfg["quarters"]) if cfg.get("quarters") else periods_for_mode_by_years(cfg["years"], mode)
+        periods = (
+            periods_by_quarters(cfg["quarters"])
+            if cfg.get("quarters")
+            else periods_for_mode_by_years(cfg["years"], mode)
+        )
+        base = f"{prefix}_vip_{mode}"
+        kinds = _kinds_for_mode(mode)
+        if cfg.get("skip_existing") and _already_downloaded(
+            outdir, base, fmt, periods, kinds
+        ):
+            print("已存在所需数据，跳过下载")
+            return
         tables = fetch_income_bulk(
             pro,
             periods=periods,
@@ -421,7 +563,6 @@ def main():
             fields=fields,
             prefer_single_quarter=cfg.get("prefer_single_quarter", True),
         )
-        base = f"{prefix}_vip_{mode}"
         save_tables(tables, outdir, base, fmt)
 
 

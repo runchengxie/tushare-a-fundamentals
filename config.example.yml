@@ -1,5 +1,5 @@
 # 示例配置（请复制为 config.yml 并按需修改）
-mode: quarterly
+mode: quarter
 years: 10
 # quarters: 40
 # ts_code: 600000.SH
@@ -9,4 +9,5 @@ fields: "ts_code,ann_date,f_ann_date,end_date,report_type,comp_type,update_flag,
 outdir: "out"
 prefix: "income"
 format: "parquet"
+skip_existing: false
 # token: "your_tushare_token"
