@@ -33,3 +33,29 @@ def test_update_flag_break_tie():
     )
     got = appmod._select_latest(df)
     assert got.iloc[0]["update_flag"] == "Y"
+
+
+def test_mark_latest_extra_sort_keys():
+    df = pd.DataFrame(
+        {
+            "ts_code": ["000001.SZ", "000001.SZ"],
+            "end_date": ["20231231", "20231231"],
+            "ann_date": ["20240101", "20240101"],
+            "priority": [1, 2],
+        }
+    )
+    flagged = appmod._tx_mark_latest(df, extra_sort_keys=["priority"])
+    assert flagged.loc[flagged["is_latest"] == 1, "priority"].iloc[0] == 2
+
+
+def test_mark_latest_custom_group_keys():
+    df = pd.DataFrame(
+        {
+            "ts_code": ["000001.SZ", "000001.SZ"],
+            "end_date": ["20231231", "20230630"],
+            "ann_date": ["20240101", "20230801"],
+        }
+    )
+    flagged = appmod._tx_mark_latest(df, group_keys=["ts_code"])
+    assert flagged["is_latest"].sum() == 1
+    assert flagged.loc[flagged["is_latest"] == 1, "end_date"].iloc[0] == "20231231"

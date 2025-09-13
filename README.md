@@ -50,6 +50,13 @@ pip install -e .
 uv sync
 ```
 
+### 运行测试
+
+```bash
+pytest
+# 如需覆盖率：pytest --cov=src --cov-report=term-missing
+```
+
 ### 运行 CLI
 
 ```bash
