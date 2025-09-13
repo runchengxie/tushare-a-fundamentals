@@ -7,7 +7,7 @@ import pytest
 pytestmark = pytest.mark.integration
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-ENV = {**os.environ, "PYTHONPATH": os.path.join(ROOT, "src")}
+ENV = {**os.environ, "PYTHONPATH": os.path.join(ROOT, "src"), "TUSHARE_TOKEN": "fake"}
 
 
 def test_cli_overrides_config(tmp_path):

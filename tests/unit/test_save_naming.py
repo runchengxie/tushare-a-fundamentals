@@ -1,11 +1,8 @@
-import os
-import sys
 import pandas as pd
 import pytest
+from tushare_a_fundamentals import cli as appmod
 
 pytestmark = pytest.mark.unit
-
-from tushare_a_fundamentals import cli as appmod
 
 
 def test_save_naming(tmp_path):
