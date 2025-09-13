@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
-from typing import Iterable, Mapping, Sequence
+from typing import Sequence
 import uuid
 import time
 import pandas as pd
@@ -76,4 +75,3 @@ def write_partitioned_dataset(
         content.to_parquet(fpath, index=False)
         written.append(fpath)
     return written
-

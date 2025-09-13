@@ -11,7 +11,7 @@ ENV = {**os.environ, "PYTHONPATH": os.path.join(ROOT, "src"), "TUSHARE_TOKEN": "
 
 
 def test_cli_overrides_config(tmp_path):
-    cfg = {"mode": "annual", "years": 1, "vip": True}
+    cfg = {"mode": "annual", "years": 1}
     cfg_path = tmp_path / "config.yml"
     cfg_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
     code = subprocess.run(
@@ -26,6 +26,8 @@ def test_cli_overrides_config(tmp_path):
             "--quarters",
             "1",
             "--vip",
+            "--ts-code",
+            "000001.SZ",
         ],
         capture_output=True,
         text=True,
