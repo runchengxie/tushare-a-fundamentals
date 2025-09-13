@@ -1,11 +1,12 @@
 import os
 import sys
+import math
 import pandas as pd
 import pytest
 
 pytestmark = pytest.mark.unit
 
-from tushare_a_fundamentals import app as appmod
+from tushare_a_fundamentals import cli as appmod
 
 
 def test_ttm_rolling_sum_min4():
@@ -16,5 +17,5 @@ def test_ttm_rolling_sum_min4():
     })
     ttm = appmod._rolling_ttm(df)
     vals = ttm["total_revenue"].tolist()
-    assert vals[:3] == [None, None, None]
+    assert all(math.isnan(v) for v in vals[:3])
     assert vals[3] == 70.0

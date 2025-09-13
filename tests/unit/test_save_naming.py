@@ -5,7 +5,7 @@ import pytest
 
 pytestmark = pytest.mark.unit
 
-from tushare_a_fundamentals import app as appmod
+from tushare_a_fundamentals import cli as appmod
 
 
 def test_save_naming(tmp_path):
@@ -15,7 +15,7 @@ def test_save_naming(tmp_path):
         "ttm": pd.DataFrame({"ts_code": ["000001.SZ"], "end_date": ["20231231"]}),
     }
     outdir = tmp_path
-    appmod.save_tables(tables, str(outdir), "income_vip_quarterly", "csv")
-    assert (outdir / "income_vip_quarterly_raw.csv").exists()
-    assert (outdir / "income_vip_quarterly_single.csv").exists()
-    assert (outdir / "income_vip_quarterly_ttm.csv").exists()
+    appmod.save_tables(tables, str(outdir), "income_vip_quarter", "csv")
+    assert (outdir / "csv" / "income_vip_quarter_raw.csv").exists()
+    assert (outdir / "csv" / "income_vip_quarter_single.csv").exists()
+    assert (outdir / "csv" / "income_vip_quarter_ttm.csv").exists()
