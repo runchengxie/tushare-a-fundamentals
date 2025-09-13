@@ -1,6 +1,6 @@
 # Tushare 基本面数据批量下载器
 
-本项目旨在实现“按年分区 + 主键去重 + 最新快照标记”的分区化 Parquet 数据集与轻量状态管理；并提供命令行脚本批量/单票抓取 A 股上市公司基本面数据，统一输出年度、单季（非累计）与 TTM 三种口径。
+本项目旨在实现“按年分区 + 主键去重 + 最新快照标记”的分区化 Parquet 数据集与轻量状态管理；并提供命令行脚本批量/单票抓取 A 股上市公司基本面数据，统一输出年度、单季（非累计）与 TTM （通过滚动四个季度数据求和）三种口径。
 
 当前已实现并稳定可用：利润表（raw/单季/TTM）；其他数据集（资产负债表、现金流、业绩预告/快报、分红、指标、审计意见、主营构成、披露日期）为待办项。
 
@@ -9,6 +9,24 @@
 可供参考的Tushare API基本面数据下载API文档：
 
 * [利润表](https://tushare.pro/document/2?doc_id=33)
+
+* [资产负债表](https://tushare.pro/document/2?doc_id=36)
+
+* [现金流量表](https://tushare.pro/document/2?doc_id=44)
+
+* [业绩预告](https://tushare.pro/document/2?doc_id=45)
+
+* [业绩快报](https://tushare.pro/document/2?doc_id=46)
+
+* [分红送股](https://tushare.pro/document/2?doc_id=103)
+
+* [财务指标数据](https://tushare.pro/document/2?doc_id=79)
+
+* [财务审计意见](https://tushare.pro/document/2?doc_id=80)
+
+* [主营业务构成](https://tushare.pro/document/2?doc_id=81)
+
+* [财报披露计划](https://tushare.pro/document/2?doc_id=162)
 
 ## 快速开始
 
