@@ -48,10 +48,14 @@ def mark_latest(
     gkeys = list(group_keys or ("ts_code", "end_date"))
     gkeys = [k for k in gkeys if k in out.columns]
     # stable sort to make cumcount deterministic across equal keys
-    out = out.sort_values(sort_cols, ascending=[False] * len(sort_cols), kind="mergesort")
+    out = out.sort_values(
+        sort_cols, ascending=[False] * len(sort_cols), kind="mergesort"
+    )
     out["_rank"] = out.groupby(gkeys).cumcount()
     out["is_latest"] = (out["_rank"] == 0).astype(int)
-    out = out.drop(columns=[c for c in ("_rt_pref", "_upd", "_rank") if c in out.columns])
+    out = out.drop(
+        columns=[c for c in ("_rt_pref", "_upd", "_rank") if c in out.columns]
+    )
     # restore original row order
     return out.sort_index()
 
@@ -65,5 +69,8 @@ def select_latest(
     if df.empty:
         return df.copy()
     flagged = mark_latest(df, group_keys=group_keys, extra_sort_keys=extra_sort_keys)
-    return flagged[flagged["is_latest"] == 1].drop(columns=["is_latest"]) if "is_latest" in flagged.columns else flagged
-
+    return (
+        flagged[flagged["is_latest"] == 1].drop(columns=["is_latest"])
+        if "is_latest" in flagged.columns
+        else flagged
+    )

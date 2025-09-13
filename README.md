@@ -60,16 +60,16 @@ funda --help
 python -m tushare_a_fundamentals.cli --help
 ```
 
-示例：全市场批量（VIP）：
+示例：全市场最近 3 年：
 
 ```bash
-funda --mode quarterly --years 3 --vip
+funda --years 3
 ```
 
 单票下载并输出 TTM：
 
 ```bash
-funda --mode ttm --ts-code 600000.SH --years 5
+funda --ts-code 600000.SH --years 5
 ```
 
 ### 两步法：ingest + build（推荐）
@@ -80,7 +80,7 @@ funda --mode ttm --ts-code 600000.SH --years 5
 
 ```bash
 funda ingest --since 2018-01-01 --periods quarterly \
-  --prefer-single-quarter --vip \
+  --prefer-single-quarter \
   --dataset-root data_root
 ```
 
@@ -108,7 +108,7 @@ funda build --kinds annual,quarterly,ttm \
 若希望将“最新快照（或全量历史）”写入按年分区的 Parquet 数据集，可提供数据集配置并指定数据根目录：
 
 ```bash
-funda --mode quarterly --years 3 --vip \
+funda --years 3 \
   --datasets-config configs/datasets.yaml \
   --dataset-root data_root
 ```

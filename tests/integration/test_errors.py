@@ -25,8 +25,8 @@ def test_error_no_token_env(monkeypatch):
     assert "缺少 TuShare token" in p.stderr
 
 
-def test_error_no_vip_no_ts_code(monkeypatch):
+def test_error_insufficient_credits(monkeypatch):
     monkeypatch.setenv("TUSHARE_TOKEN", "dummy")
-    p = run_cli("--mode", "annual", "--years", "1", "--no-vip")
+    p = run_cli("--mode", "annual", "--years", "1")
     assert p.returncode == 2
-    assert "未提供 --ts-code 且未启用 --vip" in p.stderr
+    assert "全市场批量需要至少 5000 积分" in p.stderr
