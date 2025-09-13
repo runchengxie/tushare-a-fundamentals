@@ -137,14 +137,20 @@ def parse_cli() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="批量下载A股基本面数据")
     p.add_argument("--config", type=str, default=None)
     p.add_argument(
-        "--mode", choices=[Mode.ANNUAL, Mode.QUARTER, Mode.TTM, Mode.QUARTERLY]
+        "--mode",
+        choices=[Mode.ANNUAL, Mode.QUARTER, Mode.TTM, Mode.QUARTERLY],
+        help="高级：数据模式（默认 quarterly）",
     )
     p.add_argument("--years", type=int)
     p.add_argument("--quarters", type=int)
     p.add_argument("--ts-code", type=str)
     vip_group = p.add_mutually_exclusive_group()
-    vip_group.add_argument("--vip", action="store_true")
-    vip_group.add_argument("--no-vip", action="store_true")
+    vip_group.add_argument(
+        "--vip", action="store_true", help="高级：显式启用 VIP（默认启用）"
+    )
+    vip_group.add_argument(
+        "--no-vip", action="store_true", help="高级：禁用 VIP（已废弃）"
+    )
     p.add_argument("--prefer-single-quarter", action="store_true")
     p.add_argument("--fields", type=str)
     p.add_argument("--outdir", type=str)
@@ -194,7 +200,11 @@ def parse_cli() -> argparse.Namespace:
         default=None,
         help="单票模式，不填为全市场（需VIP）",
     )
-    sp_ing.add_argument("--vip", action="store_true")
+    sp_ing.add_argument(
+        "--vip",
+        action="store_true",
+        help="高级：已废弃，批量默认使用 VIP 接口",
+    )
     sp_ing.add_argument(
         "--prefer-single-quarter",
         action="store_true",
@@ -282,6 +292,20 @@ def _retry_call(func, kwargs, max_tries=5, base_sleep=0.8):
                 raise
             time.sleep(base_sleep * (2**i))
     return None
+
+
+def _has_enough_credits(pro, required: int = 5000) -> bool:
+    """Return True if total credits meet the threshold."""
+    try:
+        df = pro.user()
+    except Exception:
+        return False
+    if df is None or df.empty:
+        return False
+    if "到期积分" not in df.columns:
+        return False
+    total = pd.to_numeric(df["到期积分"], errors="coerce").sum()
+    return total >= required
 
 
 def _concat_non_empty(dfs: List[pd.DataFrame]) -> pd.DataFrame:
@@ -608,6 +632,112 @@ def _export_tables(
     save_tables(out, out_dir, base, fmt)
 
 
+def _maybe_write_partitioned(raw_df: pd.DataFrame | None, cfg: dict) -> None:
+    if not cfg.get("dataset_root") or raw_df is None or raw_df.empty:
+        return
+    ds_cfg = _load_datasets_config(cfg.get("datasets_config"))
+    dataset = "income"
+    ds = (ds_cfg.get("datasets", {}) or {}).get(dataset, {}) if ds_cfg else {}
+    partition_by = ds.get("partition_by", "year:end_date")
+    primary_key = ds.get("primary_key", ["ts_code", "end_date", "report_type"])
+    version_by = ds.get("version_by", ["ann_date", "f_ann_date"])
+    only_latest = not cfg.get("no_only_latest", False)
+    raw_df = _tx_mark_latest(raw_df)
+    written = write_partitioned_dataset(
+        raw_df,
+        cfg["dataset_root"],
+        dataset,
+        partition_by,
+        primary_key,
+        version_by,
+        only_latest=only_latest,
+    )
+    for p in written:
+        print(f"已写入分区文件：{p}")
+
+
+def _run_single_mode(
+    pro, cfg: dict, mode: str, fields: str, fmt: str, outdir: str, prefix: str
+) -> None:
+    ts_code = cfg["ts_code"]
+    periods = (
+        periods_by_quarters(cfg["quarters"])
+        if cfg.get("quarters") and cfg["quarters"] > 0
+        else periods_for_mode_by_years(cfg["years"], mode)
+    )
+    base = f"{prefix}_{ts_code}_{mode}"
+    kinds = _kinds_for_mode(mode)
+    if cfg.get("skip_existing") and _already_downloaded(
+        outdir, base, fmt, periods, kinds
+    ):
+        print("已存在所需数据，跳过下载")
+        return
+    tables = fetch_single_stock(
+        pro,
+        ts_code=ts_code,
+        years=cfg.get("years"),
+        quarters=cfg.get("quarters"),
+        mode=mode,
+        fields=fields,
+    )
+    save_tables(tables, outdir, base, fmt)
+    _maybe_write_partitioned(tables.get("raw"), cfg)
+
+
+def _run_bulk_mode(
+    pro, cfg: dict, mode: str, fields: str, fmt: str, outdir: str, prefix: str
+) -> None:
+    if not _has_enough_credits(pro):
+        eprint("错误：全市场批量需要至少 5000 积分或提供 --ts-code 单票下载。")
+        sys.exit(2)
+    periods = (
+        periods_by_quarters(cfg["quarters"])
+        if cfg.get("quarters")
+        else periods_for_mode_by_years(cfg["years"], mode)
+    )
+    base = f"{prefix}_vip_{mode}"
+    kinds = _kinds_for_mode(mode)
+    if cfg.get("skip_existing") and _already_downloaded(
+        outdir, base, fmt, periods, kinds
+    ):
+        print("已存在所需数据，跳过下载")
+        return
+    tables = fetch_income_bulk(
+        pro,
+        periods=periods,
+        mode=mode,
+        fields=fields,
+        prefer_single_quarter=cfg.get("prefer_single_quarter", True),
+    )
+    save_tables(tables, outdir, base, fmt)
+    _maybe_write_partitioned(tables.get("raw"), cfg)
+
+
+def _ingest_single(
+    pro, ts_code: str, periods: list[str], fields: str
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    rows: list[pd.DataFrame] = []
+    for per in periods:
+        try:
+            df = _retry_call(
+                pro.income, {"fields": fields, "ts_code": ts_code, "period": per}
+            )
+        except Exception as exc:
+            eprint(f"警告：{ts_code} {per} 拉取失败：{exc}")
+            continue
+        if df is None or len(df) == 0:
+            continue
+        rows.append(df)
+    if not rows:
+        eprint("错误：未获取到任何数据")
+        sys.exit(3)
+    raw = _concat_non_empty(rows)
+    raw = _select_latest(raw)
+    raw = _coerce_numeric(raw, FLOW_FIELDS)
+    single_df = _diff_to_single(raw)
+    return raw, single_df, raw.copy()
+
+
 def cmd_ingest(args: argparse.Namespace) -> None:
     pro = init_pro_api(args.token)
     periods = _periods_from_range(args.periods, args.since, args.until)
@@ -618,28 +748,10 @@ def cmd_ingest(args: argparse.Namespace) -> None:
     prefer_single = bool(args.prefer_single_quarter)
 
     if args.ts_code:
-        # 单票：非VIP也可
-        rows: list[pd.DataFrame] = []
-        for per in periods:
-            try:
-                df = _retry_call(pro.income, {"fields": fields, "ts_code": args.ts_code, "period": per})
-            except Exception as exc:
-                eprint(f"警告：{args.ts_code} {per} 拉取失败：{exc}")
-                continue
-            if df is None or len(df) == 0:
-                continue
-            rows.append(df)
-        if not rows:
-            eprint("错误：未获取到任何数据")
-            sys.exit(3)
-        raw = _concat_non_empty(rows)
-        raw = _select_latest(raw)
-        raw = _coerce_numeric(raw, FLOW_FIELDS)
-        single_df = _diff_to_single(raw)
-        cum_df = raw.copy()
+        raw, single_df, cum_df = _ingest_single(pro, args.ts_code, periods, fields)
     else:
-        if not args.vip:
-            eprint("错误：全市场批量需要 --vip 或提供 --ts-code")
+        if not _has_enough_credits(pro):
+            eprint("错误：全市场批量需要至少 5000 积分或提供 --ts-code 单票下载。")
             sys.exit(2)
         tables = fetch_income_bulk(
             pro,
@@ -652,7 +764,6 @@ def cmd_ingest(args: argparse.Namespace) -> None:
         single_df = tables.get("single", pd.DataFrame())
         if single_df.empty:
             single_df = _diff_to_single(raw)
-        # 若 raw 为单季，则回推累计
         cum_df = _single_to_cumulative(single_df)
 
     # 标记最新快照并写入分区化数据集
@@ -660,28 +771,48 @@ def cmd_ingest(args: argparse.Namespace) -> None:
     # 写入 fact_income_single
     if not single_df.empty:
         from tushare_a_fundamentals.transforms.deduplicate import mark_latest as _mark
+
         single_df = _mark(single_df)
         write_partitioned_dataset(
             single_df,
             args.dataset_root,
             "fact_income_single",
-            (ds_cfg.get("datasets", {}).get("income", {}).get("partition_by") or "year:end_date"),
-            (ds_cfg.get("datasets", {}).get("income", {}).get("primary_key") or ["ts_code", "end_date", "report_type"]),
-            (ds_cfg.get("datasets", {}).get("income", {}).get("version_by") or ["ann_date", "f_ann_date"]),
+            (
+                ds_cfg.get("datasets", {}).get("income", {}).get("partition_by")
+                or "year:end_date"
+            ),
+            (
+                ds_cfg.get("datasets", {}).get("income", {}).get("primary_key")
+                or ["ts_code", "end_date", "report_type"]
+            ),
+            (
+                ds_cfg.get("datasets", {}).get("income", {}).get("version_by")
+                or ["ann_date", "f_ann_date"]
+            ),
             only_latest=True,
         )
         print("已写入：fact_income_single")
     # 写入 fact_income_cum
     if not cum_df.empty:
         from tushare_a_fundamentals.transforms.deduplicate import mark_latest as _mark
+
         cum_df = _mark(cum_df)
         write_partitioned_dataset(
             cum_df,
             args.dataset_root,
             "fact_income_cum",
-            (ds_cfg.get("datasets", {}).get("income", {}).get("partition_by") or "year:end_date"),
-            (ds_cfg.get("datasets", {}).get("income", {}).get("primary_key") or ["ts_code", "end_date", "report_type"]),
-            (ds_cfg.get("datasets", {}).get("income", {}).get("version_by") or ["ann_date", "f_ann_date"]),
+            (
+                ds_cfg.get("datasets", {}).get("income", {}).get("partition_by")
+                or "year:end_date"
+            ),
+            (
+                ds_cfg.get("datasets", {}).get("income", {}).get("primary_key")
+                or ["ts_code", "end_date", "report_type"]
+            ),
+            (
+                ds_cfg.get("datasets", {}).get("income", {}).get("version_by")
+                or ["ann_date", "f_ann_date"]
+            ),
             only_latest=True,
         )
         print("已写入：fact_income_cum")
@@ -691,6 +822,7 @@ def cmd_ingest(args: argparse.Namespace) -> None:
     inv = inv.sort_values("end_date")
     try:
         from pathlib import Path
+
         inv_dir = Path(args.dataset_root) / "dataset=inventory_income"
         inv_dir.mkdir(parents=True, exist_ok=True)
         inv_path = inv_dir / "periods.parquet"
@@ -726,14 +858,26 @@ def cmd_build(args: argparse.Namespace) -> None:
             sdf = single.copy()
             sdf["year"] = sdf["end_date"].astype(str).str.slice(0, 4)
             aggs = {c: "sum" for c in FLOW_FIELDS if c in sdf.columns}
-            keep_cols = [c for c in [*IDENT_FIELDS] if c in sdf.columns]
             annual = sdf.groupby(["ts_code", "year"], as_index=False).agg({**aggs})
             annual["end_date"] = annual["year"].astype(str) + "1231"
             # 组装标识列（取该年内最新公告）
             if set(["ann_date", "f_ann_date"]).issubset(sdf.columns):
-                last_ann = sdf.sort_values(["ts_code", "year", "f_ann_date", "ann_date"]).groupby(["ts_code", "year"], as_index=False).tail(1)[["ts_code", "year", "ann_date", "f_ann_date"]]
+                last_ann = (
+                    sdf.sort_values(["ts_code", "year", "f_ann_date", "ann_date"])
+                    .groupby(["ts_code", "year"], as_index=False)
+                    .tail(1)[["ts_code", "year", "ann_date", "f_ann_date"]]
+                )
                 annual = annual.merge(last_ann, on=["ts_code", "year"], how="left")
-            annual = annual.drop(columns=[c for c in annual.columns if c not in set(["ts_code", "end_date", *FLOW_FIELDS, "ann_date", "f_ann_date"])])
+            annual = annual.drop(
+                columns=[
+                    c
+                    for c in annual.columns
+                    if c
+                    not in set(
+                        ["ts_code", "end_date", *FLOW_FIELDS, "ann_date", "f_ann_date"]
+                    )
+                ]
+            )
         built["annual"] = annual
     if "ttm" in kinds:
         ttm = _rolling_ttm(single)
@@ -757,7 +901,6 @@ def main():
         "years": 10,
         "quarters": None,
         "ts_code": None,
-        "vip": True,
         "prefer_single_quarter": True,
         "fields": ",".join(DEFAULT_FIELDS),
         "outdir": "out",
@@ -778,7 +921,6 @@ def main():
             if isinstance(args, dict) and "ts_code" in args
             else args.ts_code
         ),
-        "vip": (True if args.vip else (False if args.no_vip else None)),
         "prefer_single_quarter": args.prefer_single_quarter,
         "fields": args.fields,
         "outdir": args.outdir,
@@ -802,98 +944,10 @@ def main():
         fmt = "csv"
     outdir = cfg["outdir"]
     prefix = cfg["prefix"]
-
     if cfg.get("ts_code"):
-        ts_code = cfg["ts_code"]
-        if cfg.get("quarters") and cfg["quarters"] > 0:
-            periods = periods_by_quarters(cfg["quarters"])
-        else:
-            periods = periods_for_mode_by_years(cfg["years"], mode)
-        base = f"{prefix}_{ts_code}_{mode}"
-        kinds = _kinds_for_mode(mode)
-        if cfg.get("skip_existing") and _already_downloaded(
-            outdir, base, fmt, periods, kinds
-        ):
-            print("已存在所需数据，跳过下载")
-            return
-        tables = fetch_single_stock(
-            pro,
-            ts_code=ts_code,
-            years=cfg.get("years"),
-            quarters=cfg.get("quarters"),
-            mode=mode,
-            fields=fields,
-        )
-        save_tables(tables, outdir, base, fmt)
-        # 分区化数据集写入（可选）
-        if cfg.get("dataset_root"):
-            ds_cfg = _load_datasets_config(cfg.get("datasets_config"))
-            dataset = "income"
-            ds = (ds_cfg.get("datasets", {}) or {}).get(dataset, {}) if ds_cfg else {}
-            partition_by = ds.get("partition_by", "year:end_date")
-            primary_key = ds.get("primary_key", ["ts_code", "end_date", "report_type"])
-            version_by = ds.get("version_by", ["ann_date", "f_ann_date"])
-            only_latest = not cfg.get("no_only_latest", False)
-            raw_df = tables.get("raw")
-            if raw_df is not None and not raw_df.empty:
-                raw_df = _tx_mark_latest(raw_df)
-                written = write_partitioned_dataset(
-                    raw_df,
-                    cfg["dataset_root"],
-                    dataset,
-                    partition_by,
-                    primary_key,
-                    version_by,
-                    only_latest=only_latest,
-                )
-                for p in written:
-                    print(f"已写入分区文件：{p}")
+        _run_single_mode(pro, cfg, mode, fields, fmt, outdir, prefix)
     else:
-        if cfg.get("vip") is False:
-            eprint("错误：未提供 --ts-code 且未启用 --vip，无法进行全市场批量。")
-            sys.exit(2)
-        periods = (
-            periods_by_quarters(cfg["quarters"])
-            if cfg.get("quarters")
-            else periods_for_mode_by_years(cfg["years"], mode)
-        )
-        base = f"{prefix}_vip_{mode}"
-        kinds = _kinds_for_mode(mode)
-        if cfg.get("skip_existing") and _already_downloaded(
-            outdir, base, fmt, periods, kinds
-        ):
-            print("已存在所需数据，跳过下载")
-            return
-        tables = fetch_income_bulk(
-            pro,
-            periods=periods,
-            mode=mode,
-            fields=fields,
-            prefer_single_quarter=cfg.get("prefer_single_quarter", True),
-        )
-        save_tables(tables, outdir, base, fmt)
-        if cfg.get("dataset_root"):
-            ds_cfg = _load_datasets_config(cfg.get("datasets_config"))
-            dataset = "income"
-            ds = (ds_cfg.get("datasets", {}) or {}).get(dataset, {}) if ds_cfg else {}
-            partition_by = ds.get("partition_by", "year:end_date")
-            primary_key = ds.get("primary_key", ["ts_code", "end_date", "report_type"])
-            version_by = ds.get("version_by", ["ann_date", "f_ann_date"])
-            only_latest = not cfg.get("no_only_latest", False)
-            raw_df = tables.get("raw")
-            if raw_df is not None and not raw_df.empty:
-                raw_df = _tx_mark_latest(raw_df)
-                written = write_partitioned_dataset(
-                    raw_df,
-                    cfg["dataset_root"],
-                    dataset,
-                    partition_by,
-                    primary_key,
-                    version_by,
-                    only_latest=only_latest,
-                )
-                for p in written:
-                    print(f"已写入分区文件：{p}")
+        _run_bulk_mode(pro, cfg, mode, fields, fmt, outdir, prefix)
 
 
 if __name__ == "__main__":
