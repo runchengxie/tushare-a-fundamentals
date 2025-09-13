@@ -1,149 +1,120 @@
 # Tushare基本面数据批量下载工具
 
-本项目提供一个命令行脚本，基于 TuShare 批量/单票抓取中国 A 股上市公司基本面数据，并统一输出三种口径：年度、单季（非累计）、以及TTM。该脚本抓取的信息包括：
+本项目实现 TuShare 基本面数据的分区化 Parquet 数据集与轻量状态管理。通过“按年分区 + 主键去重 + 最新快照标记”，支持长期增量与历史更正重写。
 
-* 利润表
+## 设计蓝图
 
-* 资产负债表
+```
+             +------------------+
+             |  Scheduler/CLI   |
+             +---------+--------+
+                       |
+                plan datasets
+                       v
++-----------+   fetch/transform   +-------------+
+| TuShare   +--------------------->|  Ingestion  |
+|  API      |   rate limit/retry  |  Workers    |
++-----------+                      +------+------+
+                                          |
+                                   write partitions
+                                          v
+                                +---------+----------+
+                                | Parquet Dataset(s) |
+                                |  data_root/...     |
+                                +---------+----------+
+                                          |
+                               compact / overwrite dirty
+                                          v
+                                 +--------+--------+
+                                 |  State Store    |
+                                 | SQLite/DuckDB   |
+                                 +--------+--------+
+                                          |
+                                         read
+                                          v
+                                   +------+------+
+                                   |  Consumers  |
+                                   |  DuckDB/BI  |
+                                   +-------------+
+```
 
-* 现金流量表
+## 快速开始
 
-* 业绩预告
-
-* 业绩快报
-
-* 分红送股数据
-
-* 财务指标数据
-
-* 财务审计意见
-
-* 主营业务构成
-
-* 财报披露日期表
-
-提示：所有命令行输出与错误信息均为中文；代码实现为英文。
-
-## 依赖与环境
+### 依赖
 
 * Python 3.10+
+* `pyarrow`, `pandas`, `duckdb`, `rich`, `typer`
+* 环境变量：`TUSHARE_TOKEN="<your token>"`
 
-* 依赖：tushare、pandas、pyyaml、numpy、python-dotenv、pyarrow（parquet 支持）
-  - 若环境中未自动安装，可执行 `pip install pyarrow`
-
-* TuShare Token：优先读取环境变量 `TUSHARE_TOKEN`，也可通过 `--token` 传入
-  - 不使用 direnv 时，可复制并编辑 `.env`：`cp .env.example .env`
-
-### 可选安装
-
-* 安装 direnv并配置 shell自动加载环境：
-
-    * 第一步：安装direnv并配置 shell：
-
-        * bash: `echo 'eval "$(direnv hook bash)"' >> ~/.bashrc`
-
-        * zsh: `echo 'eval "$(direnv hook zsh)"'  >> ~/.zshrc`
-
-        * fish: `echo 'direnv hook fish | source' >> ~/.config/fish/config.fish`
-
-    * 第二步，启动`.envrc`脚本
-
-    ```bash
-    cp .envrc.example .envrc
-    direnv allow
-    ```
-    `.envrc` 会自动加载同目录下的 `.env`（若存在）。
-
-* 安装 uv：
-
-    * 可用包管理器或 `pipx install uv`（项目要求 `uv >= 0.8.0`）
-
-
-### 安装（可编辑模式）
+### 安装
 
 ```bash
-# 使用pip
-pip install -e .
-
-# 使用uv
-uv sync
+pip install -r requirements.txt
 ```
 
-### 快速开始（Quickstart）
+### 配置
+
+编辑 `configs/datasets.yaml`，设定 `root`, `state_store` 以及各数据集的 `partition_by`、`primary_key`、`version_by` 等。
+
+### 常用命令
 
 ```bash
-# 查看帮助
-income-downloader --help
+# 全量初始化指定数据集（并发受限流保护）
+python -m etl.cli init --dataset income
 
-# 全市场季度，最近 40 季，优先单季口径（默认 vip: true，批量路径调用 income_vip）
-income-downloader --mode quarter --quarters 40 --vip --prefer-single-quarter
+# 每日增量（自动计算缺口）
+python -m etl.cli daily --since 2020-01-01
 
-# 再次运行时若文件已存在并完整，可跳过下载
-income-downloader --mode quarter --quarters 40 --vip --skip-existing
+# 回填/重写历史分区
+python -m etl.cli rewrite --dataset income --year 2019
 
-# 单票 TTM，最近 24 季
-income-downloader --mode ttm --ts-code 600000.SH --quarters 24
+# 合并小文件
+python -m etl.cli compact --dataset income --year 2022 --target-mb 128
 
-# 年度，最近 12 年（默认 parquet，需已安装 pyarrow）
-income-downloader --mode annual --years 12 --vip
+# 导出最新快照为单表
+python -m etl.cli materialize --dataset income --view latest --to data_root/materialized/income_latest.parquet
 ```
 
-或直接从源码运行：
+### CLI 选项要点
 
-```bash
-python3 -m tushare_a_fundamentals.cli --help
-```
+* `--concurrency` 并发抓取数
+* `--rate-limit` 每秒请求上限
+* `--since/--until` 限定抓取时间窗
+* `--dirty` 仅处理被标记为脏的分区
+* `--verify-only` 只做校验不写入
 
-## 配置文件
+## 开发约定
 
-参考 `config.yml` 示例，CLI 参数可覆盖配置值。
+* 写入逻辑统一走 `writers/dataset_writer.py`，屏蔽分区与覆盖细节；
+* 去重逻辑集中在 `transforms/deduplicate.py`，输入主键与版本字段，输出 `is_latest`；
+* 状态更新由 `meta/state_store.py` 管理；
+* 任何 schema 变更需同步更新 `configs/datasets.yaml` 与 `MANIFEST.json`。
 
-关键配置项：
+## 数据质量校验
 
-* mode: annual | quarter | ttm（`quarterly` 为兼容别名，会打印弃用警告）
-* years 或 quarters：抓取范围（二选一）
-* ts_code：为空则全市场 VIP 路径（示例：`600000.SH`、`000001.SZ`）
-* vip: true|false：是否走 income_vip（默认 true，批量路径调用 `income_vip`）
-* prefer_single_quarter: true|false：优先请求单季报表
-* skip_existing: true|false：若输出文件已包含所需 end_date，则跳过下载
-* fields：字段列表（包含标识列与流量列）
-* outdir / prefix / format（默认 parquet，示例配置中已设为 parquet）
-* token：可选，优先使用环境变量
+* 主键非空率 100%；
+* 日期字段可解析且位于合理区间；
+* 最新快照内不应存在同主键多行；
+* 行数波动超过基线阈值需发出预警。
 
-## 输出产物
+## 常见问题
 
-文件会写到 `out/csv` 或 `out/parquet`，并按 `{prefix}_vip_{mode}_{kind}.{ext}`（全市场）或 `{prefix}_{ts_code}_{mode}_{kind}.{ext}`（单票）命名。
+* **为什么保留历史版本而不直接覆盖？** 便于追溯与审计，同时快照查询通过 `is_latest=1` 不受影响。
+* **小文件太多怎么办？** 调大批量写入条数或定期运行 `compact` 合并；
+* **字段漂移导致读失败？** 新增列应设为 nullable，读取时使用统一 schema 合并。
 
-* 原始：`*_raw.(csv|parquet)`（经去重、规范化 end_date）
-* 单季：`*_single.(csv|parquet)`（quarter/ttm）
-* TTM：`*_ttm.(csv|parquet)`（ttm）
+## 故障恢复
 
-## 口径与处理规则（摘要）
+* 采集失败的分区不会更新状态表，下一轮会再次计划；
+* 标记 `dirty=1` 的分区必将被覆盖重写；
+* 若写入中断，遗留的临时文件名带 `.tmp`，下次启动会清理。
 
-* 去重：同 (ts_code, end_date) 优先 report_type=1；其次 f_ann_date、ann_date 降序；update_flag=Y 优先
-* 单季：若单季不可得，对流量字段在同年内相邻期差分；Q1 保留原值
-* TTM：在单季口径上滚动 4 季求和；不足 4 季为空
-* 流量字段白名单：total_revenue, revenue, total_cogs, operate_profit, total_profit, income_tax, n_income, n_income_attr_p, ebit, ebitda, rd_exp
+## 许可证
 
-## 异常与重试
+遵守 TuShare 使用条款；本仓库不包含任何访问秘钥或私有数据。
 
-* 指数退避重试：max_tries=5, base_sleep=0.8s
-* 典型错误：缺少 token、接口空返回、权限不足、网络错误。均会打印中文错误并以非零码退出。
+## 致谢
 
-## 开发与测试
+* PyArrow 社区
+* DuckDB 社区
 
-* 代码风格：black、ruff（见 pyproject.toml）
-* 运行 lints：
-
-```bash
-ruff check .
-black --check .
-```
-
-* 运行测试：
-
-```bash
-pytest
-```
-
-* 覆盖率配置见 pyproject.toml 中 [tool.pytest.ini_options]

@@ -1,0 +1,57 @@
+root: ./data_root
+state_store: ./meta/state.db
+file_target_mb: 128
+concurrency: 6
+rate_limit_per_sec: 8
+
+datasets:
+  income:
+    source: tushare.income
+    partition_by: year:end_date
+    primary_key: [ts_code, end_date, report_type]
+    version_by: [ann_date, f_ann_date]
+  balance:
+    source: tushare.balancesheet
+    partition_by: year:end_date
+    primary_key: [ts_code, end_date, report_type]
+    version_by: [ann_date, f_ann_date]
+  cashflow:
+    source: tushare.cashflow
+    partition_by: year:end_date
+    primary_key: [ts_code, end_date, report_type]
+    version_by: [ann_date, f_ann_date]
+  forecast:
+    source: tushare.forecast
+    partition_by: year:ann_date
+    primary_key: [ts_code, ann_date]
+    version_by: [ann_date]
+  express:
+    source: tushare.express
+    partition_by: year:ann_date
+    primary_key: [ts_code, ann_date]
+    version_by: [ann_date]
+  dividend:
+    source: tushare.dividend
+    partition_by: year:ann_date
+    primary_key: [ts_code, end_date]
+    version_by: [ann_date]
+  fin_indicator:
+    source: tushare.fina_indicator
+    partition_by: year:end_date
+    primary_key: [ts_code, end_date]
+    version_by: [ann_date, f_ann_date]
+  audit_opinion:
+    source: tushare.fina_audit
+    partition_by: year:end_date
+    primary_key: [ts_code, end_date]
+    version_by: [ann_date]
+  mainbiz:
+    source: tushare.fina_mainbz
+    partition_by: year:end_date
+    primary_key: [ts_code, end_date, biz_item]
+    version_by: [ann_date]
+  disclose_date:
+    source: tushare.disclosure_date
+    partition_by: year:end_date
+    primary_key: [ts_code, end_date]
+    version_by: [ann_date, f_ann_date]

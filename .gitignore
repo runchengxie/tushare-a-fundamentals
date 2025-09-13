@@ -34,5 +34,9 @@ out/
 *.parquet
 *.csv
 
+# State store database
+meta/state.db
+
 # Debugging purpose
 full_project_source.txt
+
