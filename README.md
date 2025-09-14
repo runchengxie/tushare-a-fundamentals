@@ -61,10 +61,10 @@ funda download --help
 funda download
 ```
 
-单票下载并输出 TTM：
+单票下载（参数 `--ticker` 等同 TuShare ts_code，如 600000.SH）并输出 TTM：
 
 ```bash
-funda download --ts-code 600000.SH --years 5 --mode ttm
+funda download --ticker 600000.SH --years 5 --mode ttm
 ```
 
 按日期范围下载（自动按 mode 的粒度计算 period）：
@@ -86,13 +86,17 @@ funda download --since 2010-01-01 --until 2019-12-31
 
 * 提供 `--since`（可选 `--until`）时优先使用日期范围；
 
+* `--export-colname ts_code`：导出文件保留旧列名 `ts_code`；默认输出列为 `ticker`；
+
+兼容性：仍接受旧参数 `--ts-code`，使用时会打印弃用提示。
+
 #### 数据完整性检测/可视化覆盖情况
 
 ```bash
-funda coverage --dataset-root data_root --by ts_code
+funda coverage --dataset-root data_root --by ticker
 ```
 
-默认按 `ts_code` 输出股票×期末日覆盖矩阵，可使用 `--by period` 按期汇总。
+默认按 `ticker` 输出股票×期末日覆盖矩阵，可使用 `--by period` 按期汇总。
 
 说明：
 

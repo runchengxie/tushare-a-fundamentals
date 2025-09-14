@@ -26,7 +26,7 @@ def test_cli_overrides_config(tmp_path):
             "--quarters",
             "1",
             "--vip",
-            "--ts-code",
+            "--ticker",
             "000001.SZ",
         ],
         capture_output=True,

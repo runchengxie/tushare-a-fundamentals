@@ -65,6 +65,7 @@ class Plan:
 
 MODE_MAP = {
     Mode.ANNUAL: Plan("annual", "reported"),
+    Mode.QUARTERLY: Plan("quarterly", "quarter"),
     Mode.QUARTER: Plan("quarterly", "quarter"),
     Mode.TTM: Plan("quarterly", "ttm"),
 }
@@ -87,6 +88,16 @@ def plan_from_mode(
 
 def eprint(msg: str) -> None:
     print(msg, file=sys.stderr)
+
+
+def _normalize_ticker_to_ts(t: str) -> str:
+    s = t.strip().upper().replace("-", ".")
+    if "." not in s:
+        if s.startswith("6"):
+            s += ".SH"
+        elif s[:1] in {"0", "3"}:
+            s += ".SZ"
+    return s
 
 
 def load_yaml(path: Optional[str]) -> dict:
@@ -150,7 +161,8 @@ def parse_cli() -> argparse.Namespace:
     )
     p.add_argument("--years", type=int)
     p.add_argument("--quarters", type=int)
-    p.add_argument("--ts-code", type=str)
+    p.add_argument("--ticker", type=str)
+    p.add_argument("--ts-code", type=str, help=argparse.SUPPRESS)
     vip_group = p.add_mutually_exclusive_group()
     vip_group.add_argument(
         "--vip", action="store_true", help="高级：显式启用 VIP（默认启用）"
@@ -163,6 +175,12 @@ def parse_cli() -> argparse.Namespace:
     p.add_argument("--outdir", type=str)
     p.add_argument("--prefix", type=str)
     p.add_argument("--format", choices=["csv", "parquet"])
+    p.add_argument(
+        "--export-colname",
+        choices=["ticker", "ts_code"],
+        default="ticker",
+        help="导出列名：ticker 或 ts_code",
+    )
     # 让默认值为 None，以便不覆盖默认“增量补全”
     p.add_argument("--skip-existing", action="store_true", default=None)
     # 顶层入口也支持 --force（强制覆盖）
@@ -193,6 +211,12 @@ def parse_cli() -> argparse.Namespace:
     sp_bld = sub.add_parser("build", help="由本地事实表构建 annual/quarterly/ttm 导出")
     sp_bld.add_argument("--dataset-root", type=str, required=True)
     sp_bld.add_argument(
+        "--export-colname",
+        choices=["ticker", "ts_code"],
+        default="ticker",
+        help="导出列名：ticker 或 ts_code",
+    )
+    sp_bld.add_argument(
         "--kinds",
         type=str,
         default="annual,quarterly,ttm",
@@ -213,9 +237,9 @@ def parse_cli() -> argparse.Namespace:
     sp_cov.add_argument("--dataset-root", type=str, required=True)
     sp_cov.add_argument(
         "--by",
-        choices=["ts_code", "period"],
-        default="ts_code",
-        help="输出维度：ts_code 或 period",
+        choices=["ticker", "ts_code", "period"],
+        default="ticker",
+        help="输出维度：ticker/ts_code 或 period",
     )
 
     # download 子命令（统一入口，默认增量补全，--force 强制覆盖）
@@ -228,14 +252,23 @@ def parse_cli() -> argparse.Namespace:
     )
     sp_dl.add_argument("--years", "--year", dest="years", type=int)
     sp_dl.add_argument("--quarters", type=int)
-    sp_dl.add_argument("--ts-code", type=str)
-    sp_dl.add_argument("--since", type=str, help="起始日期 YYYY-MM-DD（优先于 --years/--quarters）")
+    sp_dl.add_argument("--ticker", type=str)
+    sp_dl.add_argument("--ts-code", type=str, help=argparse.SUPPRESS)
+    sp_dl.add_argument(
+        "--since", type=str, help="起始日期 YYYY-MM-DD（优先于 --years/--quarters）"
+    )
     sp_dl.add_argument("--until", type=str, help="结束日期 YYYY-MM-DD（默认今天）")
     sp_dl.add_argument("--prefer-single-quarter", action="store_true")
     sp_dl.add_argument("--fields", type=str)
     sp_dl.add_argument("--outdir", type=str)
     sp_dl.add_argument("--prefix", type=str)
     sp_dl.add_argument("--format", choices=["csv", "parquet"])
+    sp_dl.add_argument(
+        "--export-colname",
+        choices=["ticker", "ts_code"],
+        default="ticker",
+        help="导出列名：ticker 或 ts_code",
+    )
     sp_dl.add_argument("--token", type=str)
     sp_dl.add_argument(
         "--datasets-config",
@@ -259,7 +292,15 @@ def parse_cli() -> argparse.Namespace:
         action="store_true",
         help="强制重新下载并覆盖已有文件（忽略增量跳过）",
     )
-    return p.parse_args()
+    args = p.parse_args()
+    raw = getattr(args, "ticker", None) or getattr(args, "ts_code", None)
+    if getattr(args, "ts_code", None) and not getattr(args, "ticker", None):
+        eprint("参数 --ts-code 将在未来版本移除，请改用 --ticker。")
+    if raw:
+        args.ts_code = _normalize_ticker_to_ts(raw)
+    else:
+        args.ts_code = None
+    return args
 
 
 def periods_for_mode_by_years(years: int, mode: str) -> List[str]:
@@ -320,7 +361,7 @@ def _retry_call(func, kwargs, max_tries=5, base_sleep=0.8):
     return None
 
 
-def _available_credits(pro) -> float | None:
+def _available_credits(pro) -> float | None:  # noqa: C901
     """Return detected total credits (sum of expiring credits) or None if unknown.
 
     Be tolerant to schema differences: prefer Chinese column "到期积分",
@@ -337,8 +378,10 @@ def _available_credits(pro) -> float | None:
         try:
             import tushare as ts
 
-            tok = _GLOBAL_TOKEN or os.getenv("TUSHARE_TOKEN") or os.getenv(
-                "TUSHARE_API_KEY"
+            tok = (
+                _GLOBAL_TOKEN
+                or os.getenv("TUSHARE_TOKEN")
+                or os.getenv("TUSHARE_API_KEY")
             )
             if tok:
                 pro2 = ts.pro_api(token=tok)
@@ -621,7 +664,11 @@ def _ensure_outdir(path: str) -> None:
 
 
 def save_tables(
-    tables: Dict[str, pd.DataFrame], outdir: str, base: str, fmt: str
+    tables: Dict[str, pd.DataFrame],
+    outdir: str,
+    base: str,
+    fmt: str,
+    export_colname: str = "ticker",
 ) -> None:
     _ensure_outdir(outdir)
     reports_dir = os.path.join(outdir, "reports")
@@ -639,10 +686,13 @@ def save_tables(
         try:
             if os.path.exists(fpath):
                 print(f"已存在（覆盖）：{fpath}")
+            out_df = df.copy()
+            if export_colname == "ticker" and "ts_code" in out_df.columns:
+                out_df = out_df.rename(columns={"ts_code": "ticker"})
             if fmt == "csv":
-                df.to_csv(fpath, index=False)
+                out_df.to_csv(fpath, index=False)
             else:
-                df.to_parquet(fpath, index=False)
+                out_df.to_parquet(fpath, index=False)
             print(f"已保存：{fpath}")
         except Exception as exc:
             eprint(f"错误：保存失败 {fpath}：{exc}")
@@ -708,13 +758,17 @@ def _load_dataset(root: str, dataset: str) -> pd.DataFrame:
 
 
 def _export_tables(
-    tables: Dict[str, pd.DataFrame], out_dir: str, prefix: str, fmt: str
+    tables: Dict[str, pd.DataFrame],
+    out_dir: str,
+    prefix: str,
+    fmt: str,
+    export_colname: str,
 ) -> None:
     base = f"{prefix}"
     out: Dict[str, pd.DataFrame] = {}
     for k, df in tables.items():
         out[k] = df
-    save_tables(out, out_dir, base, fmt)
+    save_tables(out, out_dir, base, fmt, export_colname)
 
 
 def _write_datasets_from_tables(
@@ -756,9 +810,17 @@ def _write_datasets_from_tables(
 
     # 旧布局：从 tables 推导 single/cum 并写入
     single_df = tables.get("single")
-    if (single_df is None or single_df.empty) and raw_df is not None and not raw_df.empty:
+    if (
+        (single_df is None or single_df.empty)
+        and raw_df is not None
+        and not raw_df.empty
+    ):
         single_df = _diff_to_single(raw_df)
-    cum_df = _single_to_cumulative(single_df) if single_df is not None and not single_df.empty else pd.DataFrame()
+    cum_df = (
+        _single_to_cumulative(single_df)
+        if single_df is not None and not single_df.empty
+        else pd.DataFrame()
+    )
 
     if single_df is not None and not single_df.empty:
         from tushare_a_fundamentals.transforms.deduplicate import mark_latest as _mark
@@ -844,7 +906,7 @@ def _run_single_mode(
         mode=mode,
         fields=fields,
     )
-    save_tables(tables, outdir, base, fmt)
+    save_tables(tables, outdir, base, fmt, cfg.get("export_colname", "ticker"))
     _write_datasets_from_tables(tables, cfg, periods)
 
 
@@ -854,7 +916,8 @@ def _run_bulk_mode(
     if not _has_enough_credits(pro):
         total = _available_credits(pro) or 0
         eprint(
-            f"错误：全市场批量需要至少 5000 积分或提供 --ts-code 单票下载。（检测到总积分：{int(total)}）"
+            "错误：全市场批量需要至少 5000 积分或提供 --ticker 单票下载。"
+            f"（检测到总积分：{int(total)}）"
         )
         sys.exit(2)
     periods = _periods_from_cfg(cfg, mode)
@@ -872,11 +935,8 @@ def _run_bulk_mode(
         fields=fields,
         prefer_single_quarter=cfg.get("prefer_single_quarter", True),
     )
-    save_tables(tables, outdir, base, fmt)
+    save_tables(tables, outdir, base, fmt, cfg.get("export_colname", "ticker"))
     _write_datasets_from_tables(tables, cfg, periods)
-
-
-    
 
 
 def cmd_build(args: argparse.Namespace) -> None:
@@ -932,7 +992,7 @@ def cmd_build(args: argparse.Namespace) -> None:
     if not built:
         eprint("错误：未选择任何导出口径")
         sys.exit(2)
-    _export_tables(built, out_dir, prefix, out_fmt)
+    _export_tables(built, out_dir, prefix, out_fmt, args.export_colname)
 
 
 def cmd_coverage(args: argparse.Namespace) -> None:
@@ -958,12 +1018,15 @@ def cmd_coverage(args: argparse.Namespace) -> None:
     cov = full.merge(present, on=["ts_code", "end_date"], how="left").fillna(
         {"is_present": 0}
     )
-    if args.by == "ts_code":
+    if args.by in ("ticker", "ts_code"):
         pivot = cov.pivot(index="ts_code", columns="end_date", values="is_present")
+        pivot.index.name = "ticker"
     else:
         pivot = cov.pivot(index="end_date", columns="ts_code", values="is_present")
+        pivot.columns.name = "ticker"
     pivot = pivot.sort_index().fillna(0).astype(int)
     print(pivot.to_string())
+
 
 def cmd_download(args: argparse.Namespace) -> None:
     """统一下载入口：默认增量补全，--force 则强制覆盖重下。
@@ -989,6 +1052,7 @@ def cmd_download(args: argparse.Namespace) -> None:
         "datasets_config": None,
         "dataset_root": None,
         "no_only_latest": False,
+        "export_colname": "ticker",
     }
     cli_overrides = {
         "mode": getattr(args, "mode", None),
@@ -1007,6 +1071,7 @@ def cmd_download(args: argparse.Namespace) -> None:
         "datasets_config": getattr(args, "datasets_config", None),
         "dataset_root": getattr(args, "dataset_root", None),
         "no_only_latest": getattr(args, "no_only_latest", None),
+        "export_colname": getattr(args, "export_colname", None),
     }
     cfg = merge_config(cli_overrides, cfg_file, defaults)
 
@@ -1058,6 +1123,7 @@ def main():
         "datasets_config": None,
         "dataset_root": None,
         "no_only_latest": False,
+        "export_colname": "ticker",
     }
     cli_overrides = {
         "mode": args.mode,
@@ -1080,6 +1146,7 @@ def main():
         "datasets_config": args.datasets_config,
         "dataset_root": args.dataset_root,
         "no_only_latest": args.no_only_latest,
+        "export_colname": args.export_colname,
     }
     cfg = merge_config(cli_overrides, cfg_file, defaults)
 
