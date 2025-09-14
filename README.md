@@ -79,6 +79,8 @@ funda --years 3
 funda --ts-code 600000.SH --years 5
 ```
 
+> 注意：以上顶层参数仅用于兼容旧版流程，推荐改用下文的 `ingest + build` 两步法。
+
 ### 两步法：ingest + build（推荐）
 
 目标是把“触网下载”和“离线构建导出”解耦：
@@ -104,6 +106,14 @@ funda build --kinds annual,quarterly,ttm \
   --out-format csv --out-dir out/csv \
   --dataset-root data_root
 ```
+
+3) coverage 可视化覆盖情况
+
+```bash
+funda coverage --dataset-root data_root --by ts_code
+```
+
+默认按 `ts_code` 输出股票×期末日覆盖矩阵，可使用 `--by period` 按期汇总。
 
 说明：
 - quarterly 直接来自单季事实表；
