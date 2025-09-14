@@ -1,12 +1,11 @@
 # Example configuration (please copy as config.yml and modify as needed)
-mode: quarterly               # 
 years: 10
 # quarters: 40
-prefer_single_quarter: true
 fields: "ts_code,ann_date,f_ann_date,end_date,report_type,comp_type,update_flag,total_revenue,revenue,total_cogs,operate_profit,total_profit,income_tax,n_income,n_income_attr_p,ebit,ebitda,rd_exp"
 outdir: "out"
 prefix: "income"
 format: "parquet"
-skip_existing: false
+# download 子命令默认采用增量补全（若已覆盖所需 period 则跳过）
+skip_existing: true
 # export_colname: ticker  # or ts_code
 # token: "your_tushare_token"

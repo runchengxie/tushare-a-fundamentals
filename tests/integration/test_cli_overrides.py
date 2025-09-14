@@ -15,8 +15,7 @@ def test_cli_overrides_config(tmp_path, monkeypatch):
 
     called = {}
 
-    def fake_run_bulk(pro, cfg, mode, fields, fmt, outdir, prefix):
-        called["mode"] = mode
+    def fake_run_bulk(pro, cfg, fields, fmt, outdir, prefix):
         called["quarters"] = cfg.get("quarters")
         called["years"] = cfg.get("years")
 
@@ -27,13 +26,10 @@ def test_cli_overrides_config(tmp_path, monkeypatch):
         "funda",
         "--config",
         str(cfg_path),
-        "--mode",
-        "quarterly",
         "--quarters",
         "1",
     ]
     monkeypatch.setattr(sys, "argv", argv)
     appmod.main()
-    assert called["mode"] == appmod.Mode.QUARTERLY
     assert called["quarters"] == 1
     assert called["years"] == 1

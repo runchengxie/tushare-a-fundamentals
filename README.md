@@ -67,7 +67,7 @@ uv sync
 funda download
 ```
 
-按日期范围下载（自动按 mode 的粒度计算 period）：
+按日期范围下载（按季度粒度自动计算 period）：
 
 ```bash
 funda download --since 2010-01-01  # 当不注明--until时，默认截止至今天
@@ -82,12 +82,25 @@ funda download --since 2010-01-01 --until 2019-12-31
 
 参数说明：
 
-* `--years`/`--year` 或 `--quarters` 与 `--mode` 联合决定时间窗口；
+* 时间窗口优先级：`--since/--until` > `--quarters` > `--years`（默认 10）。所有下载均按季度粒度（0331/0630/0930/1231）。
 
 * 提供 `--since`（可选 `--until`）时优先使用日期范围；
 
 * `--export-colname ts_code`：导出文件保留旧列名 `ts_code`；默认输出列为 `ticker`；
 
+全量下载（建议）：
+
+* 通过日期范围或年数覆盖全量历史。例如：
+
+    ```bash
+    # 从 2000 年至今按季度抓取
+    funda download --since 2000-01-01
+
+    # 或按近 30 年抓取
+    funda download --years 30
+    ```
+
+说明：下载口径固定为“按季度期末日的累计（YTD）值”，当前版本仅导出原始去重表 `raw`。
 
 #### 数据完整性检测/可视化覆盖情况
 
@@ -102,7 +115,6 @@ funda coverage --dataset-root data_root --by ticker
 * quarterly 由累计值差分得到单季；
 
 * annual 可选 `cumulative`（12-31）或 `sum4`（四季相加）；
-
 
 ### 离线构建（build，可选）
 

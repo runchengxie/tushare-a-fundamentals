@@ -138,11 +138,6 @@ def init_pro_api(token: Optional[str]):
 def parse_cli() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="批量下载A股基本面数据")
     p.add_argument("--config", type=str, default=None)
-    p.add_argument(
-        "--mode",
-        choices=[Mode.ANNUAL, Mode.QUARTER, Mode.QUARTERLY],
-        help="高级：数据模式（默认 quarterly）",
-    )
     p.add_argument("--years", type=int)
     p.add_argument("--quarters", type=int)
     vip_group = p.add_mutually_exclusive_group()
@@ -208,11 +203,6 @@ def parse_cli() -> argparse.Namespace:
     # download 子命令（统一入口，默认增量补全，--force 强制覆盖）
     sp_dl = sub.add_parser("download", help="下载数据（默认增量补全；--force 覆盖）")
     sp_dl.add_argument("--config", type=str, default=None)
-    sp_dl.add_argument(
-        "--mode",
-        choices=[Mode.ANNUAL, Mode.QUARTER, Mode.QUARTERLY],
-        help="高级：数据模式（默认 quarterly）",
-    )
     sp_dl.add_argument("--years", "--year", dest="years", type=int)
     sp_dl.add_argument("--quarters", type=int)
     sp_dl.add_argument(
@@ -554,20 +544,19 @@ def _periods_from_range(periods: str, since: str, until: Optional[str]) -> List[
     return sorted(res)
 
 
-def _periods_from_cfg(cfg: dict, mode: str) -> List[str]:
+def _periods_from_cfg(cfg: dict) -> List[str]:
     """根据 cfg 计算 periods 列表。
 
     优先级：since/until > quarters > years（默认10年）。
-    - 若提供 since（可选 until），自动依据 mode 对应的粒度计算覆盖的 period 列表。
+    - 若提供 since（可选 until），按季度粒度计算覆盖的 period 列表。
     - 否则若提供 quarters，按季度数量回溯。
     - 否则按 years 与 mode 计算（years 默认为 10）。
     """
     if cfg.get("since"):
-        plan = plan_from_mode(mode)
-        return _periods_from_range(plan.periodicity, cfg["since"], cfg.get("until"))
+        return _periods_from_range("quarterly", cfg["since"], cfg.get("until"))
     if cfg.get("quarters") and cfg["quarters"] > 0:
         return periods_by_quarters(cfg["quarters"])
-    return periods_for_mode_by_years(cfg.get("years", 10), mode)
+    return periods_for_mode_by_years(cfg.get("years", 10), Mode.QUARTERLY)
 
 
 def _load_dataset(root: str, dataset: str) -> pd.DataFrame:
@@ -602,26 +591,21 @@ def _export_tables(
 
 
 def _run_bulk_mode(
-    pro, cfg: dict, mode: str, fields: str, fmt: str, outdir: str, prefix: str
+    pro, cfg: dict, fields: str, fmt: str, outdir: str, prefix: str
 ) -> None:
     if not _has_enough_credits(pro):
         total = _available_credits(pro) or 0
         eprint(f"错误：全市场批量需要至少 5000 积分。（检测到总积分：{int(total)}）")
         sys.exit(2)
-    periods = _periods_from_cfg(cfg, mode)
-    base = f"{prefix}_vip_{mode}"
-    kinds = _kinds_for_mode(mode)
+    periods = _periods_from_cfg(cfg)
+    base = f"{prefix}_vip_quarterly"
+    kinds = _kinds_for_mode("quarterly")
     if cfg.get("skip_existing") and _already_downloaded(
         outdir, base, fmt, periods, kinds
     ):
         print("已存在所需数据，跳过下载")
         return
-    tables = fetch_income_bulk(
-        pro,
-        periods=periods,
-        mode=mode,
-        fields=fields,
-    )
+    tables = fetch_income_bulk(pro, periods=periods, mode="quarterly", fields=fields)
     save_tables(tables, outdir, base, fmt, cfg.get("export_colname", "ticker"))
 
 
@@ -719,7 +703,6 @@ def cmd_download(args: argparse.Namespace) -> None:
     cfg_file = load_yaml(getattr(args, "config", None))
     # 默认开启增量跳过
     defaults = {
-        "mode": Mode.QUARTERLY,
         "years": 10,
         "quarters": None,
         "since": None,
@@ -733,7 +716,6 @@ def cmd_download(args: argparse.Namespace) -> None:
         "export_colname": "ticker",
     }
     cli_overrides = {
-        "mode": getattr(args, "mode", None),
         "years": getattr(args, "years", None),
         "quarters": getattr(args, "quarters", None),
         "since": getattr(args, "since", None),
@@ -755,7 +737,6 @@ def cmd_download(args: argparse.Namespace) -> None:
         cfg["skip_existing"] = False
 
     pro = init_pro_api(cfg.get("token"))
-    mode = cfg["mode"]
     fields = cfg["fields"]
     fmt = cfg["format"]
     if fmt == "parquet" and not _check_parquet_dependency():
@@ -763,7 +744,7 @@ def cmd_download(args: argparse.Namespace) -> None:
         fmt = "csv"
     outdir = cfg["outdir"]
     prefix = cfg["prefix"]
-    _run_bulk_mode(pro, cfg, mode, fields, fmt, outdir, prefix)
+    _run_bulk_mode(pro, cfg, fields, fmt, outdir, prefix)
 
 
 def main():
@@ -777,7 +758,6 @@ def main():
         return cmd_coverage(args)
     cfg_file = load_yaml(args.config)
     defaults = {
-        "mode": Mode.QUARTERLY,
         "years": 10,
         "quarters": None,
         "since": None,
@@ -791,7 +771,6 @@ def main():
         "export_colname": "ticker",
     }
     cli_overrides = {
-        "mode": args.mode,
         "years": args.years,
         "quarters": args.quarters,
         "since": getattr(args, "since", None) if hasattr(args, "since") else None,
@@ -807,8 +786,6 @@ def main():
     cfg = merge_config(cli_overrides, cfg_file, defaults)
 
     pro = init_pro_api(cfg.get("token"))
-
-    mode = cfg["mode"]
     fields = cfg["fields"]
     fmt = cfg["format"]
     if fmt == "parquet" and not _check_parquet_dependency():
@@ -816,7 +793,7 @@ def main():
         fmt = "csv"
     outdir = cfg["outdir"]
     prefix = cfg["prefix"]
-    _run_bulk_mode(pro, cfg, mode, fields, fmt, outdir, prefix)
+    _run_bulk_mode(pro, cfg, fields, fmt, outdir, prefix)
 
 
 if __name__ == "__main__":
