@@ -1,6 +1,6 @@
 # Tushare 基本面数据批量下载器
 
-本项目旨在提供命令行脚本批量/单票抓取 A 股上市公司基本面数据，统一输出年度、单季（非累计）与 TTM （通过滚动四个季度数据求和）三种口径。
+本项目旨在提供命令行脚本批量抓取 A 股上市公司基本面数据，统一输出年度与季度累计（Q1/H1/Q3/FY）两种口径。
 
 ## 批量下载功能开发进度
 
@@ -61,12 +61,6 @@ funda download --help
 funda download
 ```
 
-单票下载（参数 `--ticker` 等同 TuShare ts_code，如 600000.SH）并输出 TTM：
-
-```bash
-funda download --ticker 600000.SH --years 5 --mode ttm
-```
-
 按日期范围下载（自动按 mode 的粒度计算 period）：
 
 ```bash
@@ -88,7 +82,6 @@ funda download --since 2010-01-01 --until 2019-12-31
 
 * `--export-colname ts_code`：导出文件保留旧列名 `ts_code`；默认输出列为 `ticker`；
 
-兼容性：仍接受旧参数 `--ts-code`，使用时会打印弃用提示。
 
 #### 数据完整性检测/可视化覆盖情况
 
@@ -100,11 +93,10 @@ funda coverage --dataset-root data_root --by ticker
 
 说明：
 
-* quarterly 直接来自单季事实表；
+* quarterly 由累计值差分得到单季；
 
 * annual 可选 `cumulative`（12-31）或 `sum4`（四季相加）；
 
-* ttm 为最近四季滚动求和；
 
 ### 离线构建（build，可选）
 
@@ -116,10 +108,10 @@ funda coverage --dataset-root data_root --by ticker
 
 * `dataset=inventory_income/periods.parquet`（已有数据的季度的清单）
 
-随后可用 `build` 构建 annual / quarterly / ttm 导出：
+随后可用 `build` 构建 annual / quarterly 导出：
 
 ```bash
-funda build --kinds annual,quarterly,ttm \
+funda build --kinds annual,quarterly \
   --annual-strategy cumulative \
   --out-format csv --out-dir out/csv \
   --dataset-root data_root
@@ -139,7 +131,7 @@ funda download --years 3 \
 
 写入路径示例：`data_root/dataset=income/year=2023/part-*.parquet`
 
-注：`build` 阶段负责从上述数据集导出 annual/quarterly/ttm。
+注：`build` 阶段负责从上述数据集导出 annual/quarterly。
 
 ## 配置
 

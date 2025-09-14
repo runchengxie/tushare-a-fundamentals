@@ -5,9 +5,9 @@ This module manages ingestion progress for each dataset and partition year.
 
 from __future__ import annotations
 
+import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
-import sqlite3
 from sqlite3 import Connection
 from typing import Optional
 

@@ -8,9 +8,9 @@
 - Root: `pyproject.toml`, `.env.example`, `.envrc.example`, `README.md`.
 
 ## Build, Test, and Development Commands
-- Setup: `uv sync` (recommended) or `pip install -e .` (+ `pytest ruff black pytest-cov`).
+- Setup: `uv sync` (recommended) or `pip install -e .` (+ `pytest ruff pytest-cov`).
 - Prepare configs: `cp config.example.yaml config.yml`; `cp configs/datasets.example.yaml configs/datasets.yaml`.
-- Lint/format: `ruff check .`; `black .` (check: `black --check .`).
+- Lint/format: `ruff check .`; `ruff format .`.
 - Tests: `pytest` (or `pytest -m unit`, `pytest -m integration`).
 - Run CLI: `funda download --help` or `python -m tushare_a_fundamentals.cli download --help`.
 

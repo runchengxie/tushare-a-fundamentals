@@ -1,5 +1,6 @@
 import pandas as pd
 import pytest
+
 from tushare_a_fundamentals import cli as appmod
 
 pytestmark = pytest.mark.unit

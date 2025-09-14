@@ -1,5 +1,7 @@
 import importlib
+
 import pytest
+
 from tushare_a_fundamentals.cli import _check_parquet_dependency
 
 
