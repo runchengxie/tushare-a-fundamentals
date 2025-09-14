@@ -79,6 +79,7 @@ funda download --since 2010-01-01 --until 2019-12-31
 * 默认增量补全：若已包含所需 period 则跳过下载
 
 * 强制覆盖：追加 `--force`，无条件重新下载并覆盖输出文件
+
 参数说明：
 
 * `--years`/`--year` 或 `--quarters` 与 `--mode` 联合决定时间窗口；
