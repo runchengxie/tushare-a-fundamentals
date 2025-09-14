@@ -70,6 +70,11 @@ MODE_MAP = {
 }
 
 
+# Cache the token used to initialize pro_api so we can reuse it
+# for endpoints that may require explicit token passing (e.g., pro.user).
+_GLOBAL_TOKEN: Optional[str] = None
+
+
 def plan_from_mode(
     mode: str, periodicity: str | None = None, view: str | None = None
 ) -> Plan:
@@ -127,6 +132,8 @@ def init_pro_api(token: Optional[str]):
 
         ts.set_token(tok)
         pro = ts.pro_api()
+        global _GLOBAL_TOKEN
+        _GLOBAL_TOKEN = tok
         return pro
     except Exception as exc:
         eprint(f"错误：初始化 TuShare 失败：{exc}")
@@ -304,21 +311,60 @@ def _retry_call(func, kwargs, max_tries=5, base_sleep=0.8):
     return None
 
 
-def _has_enough_credits(pro, required: int = 5000) -> bool:
-    """Return True if total credits meet the threshold."""
+def _available_credits(pro) -> float | None:
+    """Return detected total credits (sum of expiring credits) or None if unknown.
+
+    Be tolerant to schema differences: prefer Chinese column "到期积分",
+    but also try any column that looks like points (e.g., contains
+    "积分" or "point").
+    """
+    df = None
     try:
         df = pro.user()
     except Exception:
-        return False
+        df = None
+    # Some environments require passing token explicitly to user()
+    if df is None or hasattr(df, "empty") and df.empty:
+        try:
+            import tushare as ts
+
+            tok = _GLOBAL_TOKEN or os.getenv("TUSHARE_TOKEN") or os.getenv(
+                "TUSHARE_API_KEY"
+            )
+            if tok:
+                pro2 = ts.pro_api(token=tok)
+                df = pro2.user(token=tok)
+        except Exception:
+            df = None
     if df is None or df.empty:
+        return None
+    cols = list(df.columns)
+    target_cols: list[str] = []
+    if "到期积分" in cols:
+        target_cols = ["到期积分"]
+    else:
+        # Fallback: any column name containing 积分 or point (case-insensitive)
+        target_cols = [
+            c for c in cols if ("积分" in str(c)) or ("point" in str(c).lower())
+        ]
+    if not target_cols:
+        return None
+    total = 0.0
+    for c in target_cols:
+        try:
+            s = pd.to_numeric(df[c].astype(str).str.replace(",", ""), errors="coerce")
+            if s.notna().any():
+                total += float(s.sum(skipna=True))
+        except Exception:
+            continue
+    return total if total > 0 else None
+
+
+def _has_enough_credits(pro, required: int = 5000) -> bool:
+    """Return True if total credits meet the threshold."""
+    total = _available_credits(pro)
+    if total is None:
         return False
-    if "到期积分" not in df.columns:
-        return False
-    # Convert to numeric, allowing values like "5,000"
-    credits = pd.to_numeric(
-        df["到期积分"].astype(str).str.replace(",", ""), errors="coerce"
-    )
-    total = credits.sum()
     return total >= required
 
 
@@ -702,7 +748,10 @@ def _run_bulk_mode(
     pro, cfg: dict, mode: str, fields: str, fmt: str, outdir: str, prefix: str
 ) -> None:
     if not _has_enough_credits(pro):
-        eprint("错误：全市场批量需要至少 5000 积分或提供 --ts-code 单票下载。")
+        total = _available_credits(pro) or 0
+        eprint(
+            f"错误：全市场批量需要至少 5000 积分或提供 --ts-code 单票下载。（检测到总积分：{int(total)}）"
+        )
         sys.exit(2)
     periods = (
         periods_by_quarters(cfg["quarters"])
@@ -765,7 +814,10 @@ def cmd_ingest(args: argparse.Namespace) -> None:
         raw, single_df, cum_df = _ingest_single(pro, args.ts_code, periods, fields)
     else:
         if not _has_enough_credits(pro):
-            eprint("错误：全市场批量需要至少 5000 积分或提供 --ts-code 单票下载。")
+            total = _available_credits(pro) or 0
+            eprint(
+                f"错误：全市场批量需要至少 5000 积分或提供 --ts-code 单票下载。（检测到总积分：{int(total)}）"
+            )
             sys.exit(2)
         tables = fetch_income_bulk(
             pro,
