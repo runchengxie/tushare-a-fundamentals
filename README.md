@@ -35,7 +35,7 @@
     * 初次使用：从模板复制一份并按需修改：`cp config.example.yaml config.yml`
 
 
-* `.env`（本地）：环境变量文件，至少包含 TuShare Token。
+* `.env`（本地）：环境变量文件，至少包含 Tushare Token。
 
     * 初次使用：从模板复制并填入 token：`cp .env.example .env`
 
@@ -71,15 +71,15 @@ funda download
 按日期范围下载（自动按 mode 的粒度计算 period）：
 
 ```bash
-funda download --since 2010-01-01  # 截止今天
+funda download --since 2010-01-01  # 当不注明--until时，默认截止至今天
 funda download --since 2010-01-01 --until 2019-12-31
 ```
 
 下载模式：
 
-* 默认增量补全：若已包含所需 period 则跳过下载
+* 默认增量补全：若项目数据库已包含所需季度对应的数据则跳过下载
 
-* 强制覆盖：追加 `--force`，无条件重新下载并覆盖输出文件
+* 强制覆盖：追加 `--force`，无条件重新下载并覆盖输出文件（用于当部分公司进行回溯调整后，用户得以刷新数据库里的旧数据）
 
 参数说明：
 
