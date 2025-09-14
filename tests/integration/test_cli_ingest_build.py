@@ -7,7 +7,7 @@ from tushare_a_fundamentals import cli as appmod
 pytestmark = pytest.mark.integration
 
 
-def test_cli_ingest_and_build(tmp_path, monkeypatch):
+def test_cli_ingest_build_and_coverage(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(appmod, "init_pro_api", lambda token: object())
 
     def fake_ingest_single(pro, ts_code, periods, fields):
@@ -44,6 +44,20 @@ def test_cli_ingest_and_build(tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "argv", argv_ingest)
     appmod.main()
     assert list((tmp_path / "dataset=fact_income_single").glob("**/*.parquet"))
+
+    capsys.readouterr()
+    argv_cov = [
+        "funda",
+        "coverage",
+        "--dataset-root",
+        str(tmp_path),
+        "--by",
+        "ts_code",
+    ]
+    monkeypatch.setattr(sys, "argv", argv_cov)
+    appmod.main()
+    cov_out = capsys.readouterr().out
+    assert "000001.SZ" in cov_out
 
     out_dir = tmp_path / "out"
     argv_build = [

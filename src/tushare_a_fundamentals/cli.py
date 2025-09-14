@@ -233,6 +233,16 @@ def parse_cli() -> argparse.Namespace:
     sp_bld.add_argument("--out-format", choices=["csv", "parquet"], default="csv")
     sp_bld.add_argument("--out-dir", type=str, default="out")
     sp_bld.add_argument("--prefix", type=str, default="income")
+
+    # coverage 子命令
+    sp_cov = sub.add_parser("coverage", help="盘点已覆盖的股票×期末日")
+    sp_cov.add_argument("--dataset-root", type=str, required=True)
+    sp_cov.add_argument(
+        "--by",
+        choices=["ts_code", "period"],
+        default="ts_code",
+        help="输出维度：ts_code 或 period",
+    )
     return p.parse_args()
 
 
@@ -888,6 +898,37 @@ def cmd_build(args: argparse.Namespace) -> None:
     _export_tables(built, out_dir, prefix, out_fmt)
 
 
+def cmd_coverage(args: argparse.Namespace) -> None:
+    from pathlib import Path
+
+    root = Path(args.dataset_root)
+    inv_path = root / "dataset=inventory_income" / "periods.parquet"
+    try:
+        inv = pd.read_parquet(inv_path)
+    except Exception as exc:
+        eprint(f"错误：读取 {inv_path} 失败：{exc}")
+        sys.exit(2)
+    periods = sorted(inv["end_date"].astype(str).tolist())
+    single = _load_dataset(str(root), "fact_income_single")
+    if "is_latest" in single.columns:
+        single = single[single["is_latest"] == 1]
+    codes = sorted(single["ts_code"].unique())
+    full = pd.MultiIndex.from_product(
+        [codes, periods], names=["ts_code", "end_date"]
+    ).to_frame(index=False)
+    present = single[["ts_code", "end_date"]].drop_duplicates()
+    present["is_present"] = 1
+    cov = full.merge(present, on=["ts_code", "end_date"], how="left").fillna(
+        {"is_present": 0}
+    )
+    if args.by == "ts_code":
+        pivot = cov.pivot(index="ts_code", columns="end_date", values="is_present")
+    else:
+        pivot = cov.pivot(index="end_date", columns="ts_code", values="is_present")
+    pivot = pivot.sort_index().fillna(0).astype(int)
+    print(pivot.to_string())
+
+
 def main():
     args = parse_cli()
     # 子命令优先
@@ -895,6 +936,8 @@ def main():
         return cmd_ingest(args)
     if getattr(args, "cmd", None) == "build":
         return cmd_build(args)
+    if getattr(args, "cmd", None) == "coverage":
+        return cmd_coverage(args)
     cfg_file = load_yaml(args.config)
     defaults = {
         "mode": Mode.QUARTERLY,
