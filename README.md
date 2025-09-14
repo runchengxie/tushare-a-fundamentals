@@ -67,10 +67,10 @@ funda --help
 python -m tushare_a_fundamentals.cli --help
 ```
 
-示例：全市场最近 3 年：
+示例：全市场最近10年：
 
 ```bash
-funda --years 3
+funda --years 10
 ```
 
 单票下载并输出 TTM：
