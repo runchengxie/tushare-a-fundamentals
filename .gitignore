@@ -26,6 +26,9 @@ coverage.xml
 # IDE-related
 .vscode/
 
+# CodeBuddy
+CODEBUDDY.md
+
 # config file
 config.yaml
 configs/datasets.yaml
