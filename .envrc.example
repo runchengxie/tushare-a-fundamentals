@@ -1,16 +1,23 @@
 # Loading .env (if available)
 dotenv_if_exists .env
 
-# If a local virtual environment exists, add it to the PATH and export VIRTUAL_ENV
-if [ -d .venv ]; then
-  export VIRTUAL_ENV="$PWD/.venv"
-  PATH_add "$VIRTUAL_ENV/bin"
-fi
+# Auto-reload on key files change
+watch_file pyproject.toml
+watch_file uv.lock
+watch_file .env
 
-# Since you are using uv, this also helps ensure .venv exists (it will be created on the first run)
-if command -v uv >/dev/null 2>&1; then
-  if [ ! -d .venv ]; then
+VENV="$PWD/.venv"
+
+# Ensure .venv exists (prefer uv)
+if [ ! -d "$VENV" ]; then
+  if command -v uv >/dev/null 2>&1; then
     uv venv
     uv sync
+  else
+    python3 -m venv "$VENV"
   fi
 fi
+
+# Expose virtualenv and add bin to PATH
+export VIRTUAL_ENV="$VENV"
+PATH_add "$VENV/bin"
