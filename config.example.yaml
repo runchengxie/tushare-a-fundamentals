@@ -9,6 +9,7 @@ outdir: "out"
 prefix: "income"
 format: "parquet"
 skip_existing: false
+# export_colname: ticker  # or ts_code
 # token: "your_tushare_token"
 
 # Optional: Partitioned dataset writing

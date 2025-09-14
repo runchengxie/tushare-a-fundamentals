@@ -25,7 +25,7 @@ def _prepare_dataset(root):
 def test_cmd_coverage_by(tmp_path, capsys):
     root = _prepare_dataset(tmp_path)
 
-    args = SimpleNamespace(dataset_root=str(root), by="ts_code")
+    args = SimpleNamespace(dataset_root=str(root), by="ticker")
     cmd_coverage(args)
     out = capsys.readouterr().out
     assert "000001.SZ" in out

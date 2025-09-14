@@ -9,6 +9,7 @@ pytestmark = pytest.mark.integration
 
 def test_cli_download_build_and_coverage(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(appmod, "init_pro_api", lambda token: object())
+
     def fake_fetch_single_stock(pro, ts_code, years, quarters, mode, fields):
         df = pd.DataFrame(
             {
@@ -31,7 +32,7 @@ def test_cli_download_build_and_coverage(tmp_path, monkeypatch, capsys):
         "2023-01-01",
         "--until",
         "2023-12-31",
-        "--ts-code",
+        "--ticker",
         "000001.SZ",
         "--dataset-root",
         str(tmp_path),
@@ -49,7 +50,7 @@ def test_cli_download_build_and_coverage(tmp_path, monkeypatch, capsys):
         "--dataset-root",
         str(tmp_path),
         "--by",
-        "ts_code",
+        "ticker",
     ]
     monkeypatch.setattr(sys, "argv", argv_cov)
     appmod.main()
@@ -71,4 +72,7 @@ def test_cli_download_build_and_coverage(tmp_path, monkeypatch, capsys):
     ]
     monkeypatch.setattr(sys, "argv", argv_build)
     appmod.main()
-    assert (out_dir / "csv" / "income_annual.csv").exists()
+    annual_csv = out_dir / "csv" / "income_annual.csv"
+    assert annual_csv.exists()
+    df = pd.read_csv(annual_csv)
+    assert "ticker" in df.columns
