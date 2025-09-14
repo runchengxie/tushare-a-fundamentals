@@ -2,6 +2,9 @@ import pandas as pd
 import pytest
 
 from tushare_a_fundamentals import cli as appmod
+from tushare_a_fundamentals.transforms.deduplicate import (
+    mark_latest as _tx_mark_latest,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -45,7 +48,7 @@ def test_mark_latest_extra_sort_keys():
             "priority": [1, 2],
         }
     )
-    flagged = appmod._tx_mark_latest(df, extra_sort_keys=["priority"])
+    flagged = _tx_mark_latest(df, extra_sort_keys=["priority"])
     assert flagged.loc[flagged["is_latest"] == 1, "priority"].iloc[0] == 2
 
 
@@ -57,6 +60,6 @@ def test_mark_latest_custom_group_keys():
             "ann_date": ["20240101", "20230801"],
         }
     )
-    flagged = appmod._tx_mark_latest(df, group_keys=["ts_code"])
+    flagged = _tx_mark_latest(df, group_keys=["ts_code"])
     assert flagged["is_latest"].sum() == 1
     assert flagged.loc[flagged["is_latest"] == 1, "end_date"].iloc[0] == "20231231"

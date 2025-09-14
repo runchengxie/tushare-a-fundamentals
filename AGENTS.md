@@ -4,12 +4,12 @@
 - `src/tushare_a_fundamentals/`: Library code and CLI (`cli.py`, entry script `funda`).
 - `tests/unit/`, `tests/integration/`: Pytest suites with markers in `pyproject.toml`.
 - `tools/`: Helper scripts (e.g., `tools/check_api_availability.py`).
-- Configs: `config.example.yaml`, `configs/datasets.example.yaml` (copy to local `config.yml` and `configs/datasets.yaml`).
+- Config: `config.example.yaml` (copy to local `config.yml`).
 - Root: `pyproject.toml`, `.env.example`, `.envrc.example`, `README.md`.
 
 ## Build, Test, and Development Commands
 - Setup: `uv sync` (recommended) or `pip install -e .` (+ `pytest ruff pytest-cov`).
-- Prepare configs: `cp config.example.yaml config.yml`; `cp configs/datasets.example.yaml configs/datasets.yaml`.
+- Prepare config: `cp config.example.yaml config.yml`.
 - Lint/format: `ruff check .`; `ruff format .`.
 - Tests: `pytest` (or `pytest -m unit`, `pytest -m integration`).
 - Run CLI: `funda download --help` or `python -m tushare_a_fundamentals.cli download --help`.
