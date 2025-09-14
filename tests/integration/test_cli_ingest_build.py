@@ -1,4 +1,5 @@
 import sys
+
 import pandas as pd
 import pytest
 
@@ -9,11 +10,12 @@ pytestmark = pytest.mark.integration
 
 def test_cli_download_build_and_coverage(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(appmod, "init_pro_api", lambda token: object())
+    monkeypatch.setattr(appmod, "_has_enough_credits", lambda pro: True)
 
-    def fake_fetch_single_stock(pro, ts_code, years, quarters, mode, fields):
+    def fake_fetch_income_bulk(pro, periods, mode, fields):
         df = pd.DataFrame(
             {
-                "ts_code": [ts_code],
+                "ts_code": ["000001.SZ"],
                 "end_date": ["20231231"],
                 "ann_date": ["20240101"],
                 "f_ann_date": ["20240102"],
@@ -21,9 +23,9 @@ def test_cli_download_build_and_coverage(tmp_path, monkeypatch, capsys):
                 "revenue": [100],
             }
         )
-        return {"raw": df.copy(), "single": df.copy()}
+        return {"raw": df.copy()}
 
-    monkeypatch.setattr(appmod, "fetch_single_stock", fake_fetch_single_stock)
+    monkeypatch.setattr(appmod, "fetch_income_bulk", fake_fetch_income_bulk)
 
     argv_dl = [
         "funda",
@@ -32,8 +34,6 @@ def test_cli_download_build_and_coverage(tmp_path, monkeypatch, capsys):
         "2023-01-01",
         "--until",
         "2023-12-31",
-        "--ticker",
-        "000001.SZ",
         "--dataset-root",
         str(tmp_path),
         "--token",

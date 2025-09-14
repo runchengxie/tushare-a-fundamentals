@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import time
+import uuid
 from pathlib import Path
 from typing import Sequence
-import uuid
-import time
+
 import pandas as pd
 
 from tushare_a_fundamentals.transforms.deduplicate import mark_latest

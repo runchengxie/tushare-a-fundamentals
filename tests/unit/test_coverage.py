@@ -1,5 +1,6 @@
-import pandas as pd
 from types import SimpleNamespace
+
+import pandas as pd
 
 from tushare_a_fundamentals.cli import cmd_coverage
 

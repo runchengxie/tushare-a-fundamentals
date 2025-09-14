@@ -9,8 +9,8 @@ import sys
 from datetime import datetime
 
 try:
-    import tushare as ts
     import pandas as pd
+    import tushare as ts
     from dotenv import load_dotenv
 except ImportError as e:
     print(f"❌ 缺少依赖: {e}")

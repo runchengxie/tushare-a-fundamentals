@@ -1,21 +1,24 @@
 import argparse
+import importlib
 import os
 import sys
 import time
-import yaml
-import pandas as pd
-from typing import List, Dict, Optional
-import importlib
 from dataclasses import dataclass
-from typing import Literal
+from typing import Dict, List, Literal, Optional
+
+import pandas as pd
+import yaml
+
+from tushare_a_fundamentals.transforms.deduplicate import (
+    mark_latest as _tx_mark_latest,
+)
 from tushare_a_fundamentals.transforms.deduplicate import (
     select_latest as _tx_select_latest,
-    mark_latest as _tx_mark_latest,
 )
 from tushare_a_fundamentals.writers.dataset_writer import write_partitioned_dataset
 
-# 不在导入时自动加载 .env，避免测试环境被隐式污染。
-# 若需要本地读取 .env，可自行在 shell 中使用 direnv 或显式导出环境变量。
+# Do not auto-load .env on import to avoid polluting test environments.
+# To load .env locally, use direnv or export variables in the shell.
 if os.getenv("TUSHARE_API_KEY") and not os.getenv("TUSHARE_TOKEN"):
     os.environ["TUSHARE_TOKEN"] = os.getenv("TUSHARE_API_KEY")
 
@@ -51,7 +54,6 @@ PERIOD_NODES = ["0331", "0630", "0930", "1231"]
 class Mode:
     ANNUAL = "annual"
     QUARTER = "quarter"
-    TTM = "ttm"
     # legacy aliases
     SEMIANNUAL = "semiannual"
     QUARTERLY = "quarterly"
@@ -60,14 +62,12 @@ class Mode:
 @dataclass
 class Plan:
     periodicity: Literal["annual", "semiannual", "quarterly"]
-    view: Literal["reported", "quarter", "ttm"]
 
 
 MODE_MAP = {
-    Mode.ANNUAL: Plan("annual", "reported"),
-    Mode.QUARTERLY: Plan("quarterly", "quarter"),
-    Mode.QUARTER: Plan("quarterly", "quarter"),
-    Mode.TTM: Plan("quarterly", "ttm"),
+    Mode.ANNUAL: Plan("annual"),
+    Mode.QUARTERLY: Plan("quarterly"),
+    Mode.QUARTER: Plan("quarterly"),
 }
 
 
@@ -76,28 +76,16 @@ MODE_MAP = {
 _GLOBAL_TOKEN: Optional[str] = None
 
 
-def plan_from_mode(
-    mode: str, periodicity: str | None = None, view: str | None = None
-) -> Plan:
+def plan_from_mode(mode: str, periodicity: str | None = None) -> Plan:
     m = mode.lower()
     if m == Mode.QUARTER:
         eprint("警告：'quarter' 模式已弃用，请使用 'quarterly'")
     p = MODE_MAP[m]
-    return Plan(periodicity or p.periodicity, view or p.view)
+    return Plan(periodicity or p.periodicity)
 
 
 def eprint(msg: str) -> None:
     print(msg, file=sys.stderr)
-
-
-def _normalize_ticker_to_ts(t: str) -> str:
-    s = t.strip().upper().replace("-", ".")
-    if "." not in s:
-        if s.startswith("6"):
-            s += ".SH"
-        elif s[:1] in {"0", "3"}:
-            s += ".SZ"
-    return s
 
 
 def load_yaml(path: Optional[str]) -> dict:
@@ -156,13 +144,11 @@ def parse_cli() -> argparse.Namespace:
     p.add_argument("--config", type=str, default=None)
     p.add_argument(
         "--mode",
-        choices=[Mode.ANNUAL, Mode.QUARTER, Mode.TTM, Mode.QUARTERLY],
+        choices=[Mode.ANNUAL, Mode.QUARTER, Mode.QUARTERLY],
         help="高级：数据模式（默认 quarterly）",
     )
     p.add_argument("--years", type=int)
     p.add_argument("--quarters", type=int)
-    p.add_argument("--ticker", type=str)
-    p.add_argument("--ts-code", type=str, help=argparse.SUPPRESS)
     vip_group = p.add_mutually_exclusive_group()
     vip_group.add_argument(
         "--vip", action="store_true", help="高级：显式启用 VIP（默认启用）"
@@ -170,7 +156,6 @@ def parse_cli() -> argparse.Namespace:
     vip_group.add_argument(
         "--no-vip", action="store_true", help="高级：禁用 VIP（已废弃）"
     )
-    p.add_argument("--prefer-single-quarter", action="store_true")
     p.add_argument("--fields", type=str)
     p.add_argument("--outdir", type=str)
     p.add_argument("--prefix", type=str)
@@ -208,7 +193,7 @@ def parse_cli() -> argparse.Namespace:
     # 子命令：download/build/coverage
     sub = p.add_subparsers(dest="cmd")
     # build 子命令
-    sp_bld = sub.add_parser("build", help="由本地事实表构建 annual/quarterly/ttm 导出")
+    sp_bld = sub.add_parser("build", help="由本地事实表构建 annual/quarterly 导出")
     sp_bld.add_argument("--dataset-root", type=str, required=True)
     sp_bld.add_argument(
         "--export-colname",
@@ -219,8 +204,8 @@ def parse_cli() -> argparse.Namespace:
     sp_bld.add_argument(
         "--kinds",
         type=str,
-        default="annual,quarterly,ttm",
-        help="逗号分隔：annual,quarterly,ttm",
+        default="annual,quarterly",
+        help="逗号分隔：annual,quarterly",
     )
     sp_bld.add_argument(
         "--annual-strategy",
@@ -247,18 +232,15 @@ def parse_cli() -> argparse.Namespace:
     sp_dl.add_argument("--config", type=str, default=None)
     sp_dl.add_argument(
         "--mode",
-        choices=[Mode.ANNUAL, Mode.QUARTER, Mode.TTM, Mode.QUARTERLY],
+        choices=[Mode.ANNUAL, Mode.QUARTER, Mode.QUARTERLY],
         help="高级：数据模式（默认 quarterly）",
     )
     sp_dl.add_argument("--years", "--year", dest="years", type=int)
     sp_dl.add_argument("--quarters", type=int)
-    sp_dl.add_argument("--ticker", type=str)
-    sp_dl.add_argument("--ts-code", type=str, help=argparse.SUPPRESS)
     sp_dl.add_argument(
         "--since", type=str, help="起始日期 YYYY-MM-DD（优先于 --years/--quarters）"
     )
     sp_dl.add_argument("--until", type=str, help="结束日期 YYYY-MM-DD（默认今天）")
-    sp_dl.add_argument("--prefer-single-quarter", action="store_true")
     sp_dl.add_argument("--fields", type=str)
     sp_dl.add_argument("--outdir", type=str)
     sp_dl.add_argument("--prefix", type=str)
@@ -293,13 +275,6 @@ def parse_cli() -> argparse.Namespace:
         help="强制重新下载并覆盖已有文件（忽略增量跳过）",
     )
     args = p.parse_args()
-    raw = getattr(args, "ticker", None) or getattr(args, "ts_code", None)
-    if getattr(args, "ts_code", None) and not getattr(args, "ticker", None):
-        eprint("参数 --ts-code 将在未来版本移除，请改用 --ticker。")
-    if raw:
-        args.ts_code = _normalize_ticker_to_ts(raw)
-    else:
-        args.ts_code = None
     return args
 
 
@@ -440,12 +415,7 @@ def _check_parquet_dependency() -> bool:
 
 
 def _kinds_for_mode(mode: str) -> List[str]:
-    kinds = ["raw"]
-    if mode in (Mode.QUARTER, Mode.QUARTERLY, Mode.TTM):
-        kinds.append("single")
-    if mode == Mode.TTM:
-        kinds.append("ttm")
-    return kinds
+    return ["raw"]
 
 
 def _already_downloaded(
@@ -529,19 +499,6 @@ def _diff_to_single(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def _rolling_ttm(single_df: pd.DataFrame) -> pd.DataFrame:
-    if single_df.empty:
-        return single_df
-    df = single_df.copy()
-    df = df.sort_values(["ts_code", "end_date"])  # end_date already sortable
-    for col in FLOW_FIELDS:
-        if col in df.columns:
-            df[col] = df.groupby("ts_code", as_index=False)[col].transform(
-                lambda s: s.rolling(4, min_periods=4).sum()
-            )
-    return df
-
-
 def _single_to_cumulative(single_df: pd.DataFrame) -> pd.DataFrame:
     if single_df.empty:
         return single_df
@@ -557,19 +514,13 @@ def _single_to_cumulative(single_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def fetch_income_bulk(
-    pro, periods: List[str], mode: str, fields: str, prefer_single_quarter: bool
+    pro, periods: List[str], mode: str, fields: str
 ) -> Dict[str, pd.DataFrame]:
-    """Fetch multiple periods via income_vip and return processed tables.
-
-    Empty or all-NA responses are skipped before concatenation to avoid
-    pandas FutureWarning.
-    """
+    """Fetch multiple periods via income_vip and return cumulative tables."""
     tables: Dict[str, pd.DataFrame] = {}
     all_rows: List[pd.DataFrame] = []
     for per in periods:
         params = {"period": per}
-        if prefer_single_quarter and mode in (Mode.QUARTER, Mode.QUARTERLY, Mode.TTM):
-            params["report_type"] = 2
         try:
             df = _retry_call(pro.income_vip, {"fields": fields, **params})
         except Exception as exc:
@@ -589,73 +540,6 @@ def fetch_income_bulk(
     raw = _select_latest(raw)
     raw = _coerce_numeric(raw, FLOW_FIELDS)
     tables["raw"] = raw
-    if mode in (Mode.QUARTER, Mode.QUARTERLY, Mode.TTM):
-        if prefer_single_quarter:
-            single = raw.copy()
-        else:
-            single = _diff_to_single(raw)
-        tables["single"] = single
-    if mode == Mode.TTM:
-        ttm = (
-            _rolling_ttm(tables["single"])
-            if "single" in tables
-            else _rolling_ttm(_diff_to_single(raw))
-        )
-        tables["ttm"] = ttm
-    return tables
-
-
-def fetch_single_stock(
-    pro,
-    ts_code: str,
-    years: Optional[int],
-    quarters: Optional[int],
-    mode: str,
-    fields: str,
-) -> Dict[str, pd.DataFrame]:
-    """Fetch income statements for a single stock.
-
-    Empty or all-NA responses are skipped before concatenation to avoid
-    pandas FutureWarning.
-    """
-    if quarters and quarters > 0:
-        periods = periods_by_quarters(quarters)
-    else:
-        if not years:
-            eprint("错误：单票模式需要 --years 或 --quarters 之一")
-            sys.exit(2)
-        periods = periods_for_mode_by_years(years, mode)
-    all_rows: List[pd.DataFrame] = []
-    for per in periods:
-        params = {"ts_code": ts_code, "period": per}
-        try:
-            df = _retry_call(pro.income, {"fields": fields, **params})
-        except Exception as exc:
-            eprint(f"警告：{ts_code} {per} 拉取失败：{exc}")
-            continue
-        if df is None or len(df) == 0:
-            continue
-        all_rows.append(df)
-    if not all_rows:
-        eprint("错误：未获取到任何数据")
-        sys.exit(3)
-    raw = _concat_non_empty(all_rows)
-    if raw.empty:
-        eprint("错误：未获取到任何数据")
-        sys.exit(3)
-    raw = _select_latest(raw)
-    raw = _coerce_numeric(raw, FLOW_FIELDS)
-    tables: Dict[str, pd.DataFrame] = {"raw": raw}
-    if mode in (Mode.QUARTER, Mode.QUARTERLY, Mode.TTM):
-        single = _diff_to_single(raw)
-        tables["single"] = single
-    if mode == Mode.TTM:
-        ttm = (
-            _rolling_ttm(tables["single"])
-            if "single" in tables
-            else _rolling_ttm(_diff_to_single(raw))
-        )
-        tables["ttm"] = ttm
     return tables
 
 
@@ -886,39 +770,12 @@ def _write_datasets_from_tables(
             eprint(f"警告：写入 inventory_periods 失败：{exc}")
 
 
-def _run_single_mode(
-    pro, cfg: dict, mode: str, fields: str, fmt: str, outdir: str, prefix: str
-) -> None:
-    ts_code = cfg["ts_code"]
-    periods = _periods_from_cfg(cfg, mode)
-    base = f"{prefix}_{ts_code}_{mode}"
-    kinds = _kinds_for_mode(mode)
-    if cfg.get("skip_existing") and _already_downloaded(
-        outdir, base, fmt, periods, kinds
-    ):
-        print("已存在所需数据，跳过下载")
-        return
-    tables = fetch_single_stock(
-        pro,
-        ts_code=ts_code,
-        years=cfg.get("years"),
-        quarters=cfg.get("quarters"),
-        mode=mode,
-        fields=fields,
-    )
-    save_tables(tables, outdir, base, fmt, cfg.get("export_colname", "ticker"))
-    _write_datasets_from_tables(tables, cfg, periods)
-
-
 def _run_bulk_mode(
     pro, cfg: dict, mode: str, fields: str, fmt: str, outdir: str, prefix: str
 ) -> None:
     if not _has_enough_credits(pro):
         total = _available_credits(pro) or 0
-        eprint(
-            "错误：全市场批量需要至少 5000 积分或提供 --ticker 单票下载。"
-            f"（检测到总积分：{int(total)}）"
-        )
+        eprint(f"错误：全市场批量需要至少 5000 积分。（检测到总积分：{int(total)}）")
         sys.exit(2)
     periods = _periods_from_cfg(cfg, mode)
     base = f"{prefix}_vip_{mode}"
@@ -933,7 +790,6 @@ def _run_bulk_mode(
         periods=periods,
         mode=mode,
         fields=fields,
-        prefer_single_quarter=cfg.get("prefer_single_quarter", True),
     )
     save_tables(tables, outdir, base, fmt, cfg.get("export_colname", "ticker"))
     _write_datasets_from_tables(tables, cfg, periods)
@@ -986,9 +842,6 @@ def cmd_build(args: argparse.Namespace) -> None:
                 ]
             )
         built["annual"] = annual
-    if "ttm" in kinds:
-        ttm = _rolling_ttm(single)
-        built["ttm"] = ttm
     if not built:
         eprint("错误：未选择任何导出口径")
         sys.exit(2)
@@ -1039,10 +892,8 @@ def cmd_download(args: argparse.Namespace) -> None:
         "mode": Mode.QUARTERLY,
         "years": 10,
         "quarters": None,
-        "ts_code": None,
         "since": None,
         "until": None,
-        "prefer_single_quarter": True,
         "fields": ",".join(DEFAULT_FIELDS),
         "outdir": "out",
         "prefix": "income",
@@ -1058,10 +909,8 @@ def cmd_download(args: argparse.Namespace) -> None:
         "mode": getattr(args, "mode", None),
         "years": getattr(args, "years", None),
         "quarters": getattr(args, "quarters", None),
-        "ts_code": getattr(args, "ts_code", None),
         "since": getattr(args, "since", None),
         "until": getattr(args, "until", None),
-        "prefer_single_quarter": getattr(args, "prefer_single_quarter", None),
         "fields": getattr(args, "fields", None),
         "outdir": getattr(args, "outdir", None),
         "prefix": getattr(args, "prefix", None),
@@ -1090,10 +939,7 @@ def cmd_download(args: argparse.Namespace) -> None:
         fmt = "csv"
     outdir = cfg["outdir"]
     prefix = cfg["prefix"]
-    if cfg.get("ts_code"):
-        _run_single_mode(pro, cfg, mode, fields, fmt, outdir, prefix)
-    else:
-        _run_bulk_mode(pro, cfg, mode, fields, fmt, outdir, prefix)
+    _run_bulk_mode(pro, cfg, mode, fields, fmt, outdir, prefix)
 
 
 def main():
@@ -1110,10 +956,8 @@ def main():
         "mode": Mode.QUARTERLY,
         "years": 10,
         "quarters": None,
-        "ts_code": None,
         "since": None,
         "until": None,
-        "prefer_single_quarter": True,
         "fields": ",".join(DEFAULT_FIELDS),
         "outdir": "out",
         "prefix": "income",
@@ -1129,14 +973,8 @@ def main():
         "mode": args.mode,
         "years": args.years,
         "quarters": args.quarters,
-        "ts_code": (
-            args["ts_code"]
-            if isinstance(args, dict) and "ts_code" in args
-            else args.ts_code
-        ),
         "since": getattr(args, "since", None) if hasattr(args, "since") else None,
         "until": getattr(args, "until", None) if hasattr(args, "until") else None,
-        "prefer_single_quarter": args.prefer_single_quarter,
         "fields": args.fields,
         "outdir": args.outdir,
         "prefix": args.prefix,
@@ -1160,10 +998,7 @@ def main():
         fmt = "csv"
     outdir = cfg["outdir"]
     prefix = cfg["prefix"]
-    if cfg.get("ts_code"):
-        _run_single_mode(pro, cfg, mode, fields, fmt, outdir, prefix)
-    else:
-        _run_bulk_mode(pro, cfg, mode, fields, fmt, outdir, prefix)
+    _run_bulk_mode(pro, cfg, mode, fields, fmt, outdir, prefix)
 
 
 if __name__ == "__main__":

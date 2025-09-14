@@ -1,5 +1,7 @@
 import warnings
+
 import pandas as pd
+
 from tushare_a_fundamentals.cli import _concat_non_empty
 
 
