@@ -34,7 +34,6 @@
 
     * 初次使用：从模板复制一份并按需修改：`cp config.example.yaml config.yml`
 
-
 * `.env`（本地）：环境变量文件，至少包含 Tushare Token。
 
     * 初次使用：从模板复制并填入 token：`cp .env.example .env`
