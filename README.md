@@ -49,16 +49,15 @@ uv sync
 ### 运行 CLI
 
 ```bash
-# 推荐统一入口
+# 运行帮助
 funda download --help
-
-# 等价方式（模块运行）
-python -m tushare_a_fundamentals.cli download --help
 ```
 
-示例：全市场最近 10 年（默认）：
+#### 数据下载
+
 
 ```bash
+# 下载全市场最近 10 年（默认）
 funda download
 ```
 
@@ -86,28 +85,7 @@ funda download --since 2010-01-01 --until 2019-12-31
 
 * 提供 `--since`（可选 `--until`）时优先使用日期范围；
 
-兼容说明：仍可使用旧版顶层参数（如 `funda --years 10`），但推荐迁移到 `funda download`。
-
-### 离线构建（build，可选）
-
-当 `download` 指定 `--dataset-root` 时，会写入以下数据集，用于离线构建：
-
-* `dataset=fact_income_single/year=YYYY/*.parquet`（最新快照）
-
-* `dataset=fact_income_cum/year=YYYY/*.parquet`（最新快照）
-
-* `dataset=inventory_income/periods.parquet`（覆盖 period 清单）
-
-随后可用 `build` 构建 annual / quarterly / ttm 导出：
-
-```bash
-funda build --kinds annual,quarterly,ttm \
-  --annual-strategy cumulative \
-  --out-format csv --out-dir out/csv \
-  --dataset-root data_root
-```
-
-coverage 可视化覆盖情况
+#### 数据完整性检测/可视化覆盖情况
 
 ```bash
 funda coverage --dataset-root data_root --by ts_code
@@ -122,6 +100,27 @@ funda coverage --dataset-root data_root --by ts_code
 * annual 可选 `cumulative`（12-31）或 `sum4`（四季相加）；
 
 * ttm 为最近四季滚动求和；
+
+### 离线构建（build，可选）
+
+当 `download` 指定 `--dataset-root` 时，会写入以下数据集，用于离线构建：
+
+* `dataset=fact_income_single/year=YYYY/*.parquet`（最新快照）
+
+* `dataset=fact_income_cum/year=YYYY/*.parquet`（最新快照）
+
+* `dataset=inventory_income/periods.parquet`（已有数据的季度的清单）
+
+随后可用 `build` 构建 annual / quarterly / ttm 导出：
+
+```bash
+funda build --kinds annual,quarterly,ttm \
+  --annual-strategy cumulative \
+  --out-format csv --out-dir out/csv \
+  --dataset-root data_root
+```
+
+
 
 ### 分区化数据集写入（可选）
 
