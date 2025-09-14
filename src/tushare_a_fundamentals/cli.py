@@ -314,7 +314,11 @@ def _has_enough_credits(pro, required: int = 5000) -> bool:
         return False
     if "到期积分" not in df.columns:
         return False
-    total = pd.to_numeric(df["到期积分"], errors="coerce").sum()
+    # Convert to numeric, allowing values like "5,000"
+    credits = pd.to_numeric(
+        df["到期积分"].astype(str).str.replace(",", ""), errors="coerce"
+    )
+    total = credits.sum()
     return total >= required
 
 
