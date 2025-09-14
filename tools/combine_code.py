@@ -83,6 +83,7 @@ EXCLUDE_FILES: Set[str] = {
     ".DS_Store",
     "Thumbs.db",
     "celerybeat-schedule",
+    ".env",
 }
 
 

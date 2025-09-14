@@ -7,33 +7,30 @@ from tushare_a_fundamentals import cli as appmod
 pytestmark = pytest.mark.integration
 
 
-def test_cli_ingest_build_and_coverage(tmp_path, monkeypatch, capsys):
+def test_cli_download_build_and_coverage(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(appmod, "init_pro_api", lambda token: object())
-
-    def fake_ingest_single(pro, ts_code, periods, fields):
+    def fake_fetch_single_stock(pro, ts_code, years, quarters, mode, fields):
         df = pd.DataFrame(
             {
                 "ts_code": [ts_code],
-                "end_date": [periods[0]],
+                "end_date": ["20231231"],
                 "ann_date": ["20240101"],
                 "f_ann_date": ["20240102"],
                 "report_type": [1],
                 "revenue": [100],
             }
         )
-        return df, df.copy(), df.copy()
+        return {"raw": df.copy(), "single": df.copy()}
 
-    monkeypatch.setattr(appmod, "_ingest_single", fake_ingest_single)
+    monkeypatch.setattr(appmod, "fetch_single_stock", fake_fetch_single_stock)
 
-    argv_ingest = [
+    argv_dl = [
         "funda",
-        "ingest",
+        "download",
         "--since",
         "2023-01-01",
         "--until",
         "2023-12-31",
-        "--periods",
-        "quarterly",
         "--ts-code",
         "000001.SZ",
         "--dataset-root",
@@ -41,7 +38,7 @@ def test_cli_ingest_build_and_coverage(tmp_path, monkeypatch, capsys):
         "--token",
         "fake",
     ]
-    monkeypatch.setattr(sys, "argv", argv_ingest)
+    monkeypatch.setattr(sys, "argv", argv_dl)
     appmod.main()
     assert list((tmp_path / "dataset=fact_income_single").glob("**/*.parquet"))
 
