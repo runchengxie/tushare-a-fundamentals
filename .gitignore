@@ -31,7 +31,6 @@ CODEBUDDY.md
 
 # config file
 config.yaml
-configs/datasets.yaml
 
 # File ouputs
 out/

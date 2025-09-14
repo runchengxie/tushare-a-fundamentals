@@ -10,12 +10,8 @@ import pandas as pd
 import yaml
 
 from tushare_a_fundamentals.transforms.deduplicate import (
-    mark_latest as _tx_mark_latest,
-)
-from tushare_a_fundamentals.transforms.deduplicate import (
     select_latest as _tx_select_latest,
 )
-from tushare_a_fundamentals.writers.dataset_writer import write_partitioned_dataset
 
 # Do not auto-load .env on import to avoid polluting test environments.
 # To load .env locally, use direnv or export variables in the shell.
@@ -171,24 +167,6 @@ def parse_cli() -> argparse.Namespace:
     # 顶层入口也支持 --force（强制覆盖）
     p.add_argument("--force", action="store_true")
     p.add_argument("--token", type=str)
-    # 可选：分区化数据集写入相关参数
-    p.add_argument(
-        "--datasets-config",
-        type=str,
-        default=None,
-        help="数据集配置文件，默认读取 configs/datasets.yaml",
-    )
-    p.add_argument(
-        "--dataset-root",
-        type=str,
-        default=None,
-        help="分区化数据集根目录，提供后将额外写入分区化数据集",
-    )
-    p.add_argument(
-        "--no-only-latest",
-        action="store_true",
-        help="写入分区化数据集时，包含历史版本而不仅是最新快照",
-    )
 
     # 子命令：download/build/coverage
     sub = p.add_subparsers(dest="cmd")
@@ -252,23 +230,6 @@ def parse_cli() -> argparse.Namespace:
         help="导出列名：ticker 或 ts_code",
     )
     sp_dl.add_argument("--token", type=str)
-    sp_dl.add_argument(
-        "--datasets-config",
-        type=str,
-        default=None,
-        help="数据集配置文件，默认读取 configs/datasets.yaml",
-    )
-    sp_dl.add_argument(
-        "--dataset-root",
-        type=str,
-        default=None,
-        help="分区化数据集根目录，提供后将额外写入分区化数据集",
-    )
-    sp_dl.add_argument(
-        "--no-only-latest",
-        action="store_true",
-        help="写入分区化数据集时，包含历史版本而不仅是最新快照",
-    )
     sp_dl.add_argument(
         "--force",
         action="store_true",
@@ -459,21 +420,6 @@ def _select_latest(df: pd.DataFrame) -> pd.DataFrame:
     return got
 
 
-def _load_datasets_config(path: Optional[str]) -> dict:
-    if path is None:
-        candidate = os.path.join(os.getcwd(), "configs", "datasets.yaml")
-        if os.path.exists(candidate):
-            path = candidate
-        else:
-            return {}
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return yaml.safe_load(f) or {}
-    except Exception as exc:
-        eprint(f"警告：读取数据集配置失败（{path}）：{exc}")
-        return {}
-
-
 def _coerce_numeric(df: pd.DataFrame, cols: List[str]) -> pd.DataFrame:
     for c in cols:
         if c in df.columns:
@@ -655,121 +601,6 @@ def _export_tables(
     save_tables(out, out_dir, base, fmt, export_colname)
 
 
-def _write_datasets_from_tables(
-    tables: Dict[str, pd.DataFrame], cfg: dict, periods: List[str]
-) -> None:
-    """将下载结果写入分区化数据集，兼容旧/新两套布局。
-
-    - 新布局：dataset=income（包含 is_latest；only_latest 由 cfg.no_only_latest 控制）
-    - 旧布局（为覆盖 build/coverage 等流程保留）：
-        - dataset=fact_income_single（只写最新快照）
-        - dataset=fact_income_cum（只写最新快照）
-        - dataset=inventory_income/periods.parquet
-    """
-    root = cfg.get("dataset_root")
-    if not root:
-        return
-    ds_cfg = _load_datasets_config(cfg.get("datasets_config"))
-
-    raw_df = tables.get("raw")
-    if raw_df is not None and not raw_df.empty:
-        dataset = "income"
-        ds = (ds_cfg.get("datasets", {}) or {}).get(dataset, {}) if ds_cfg else {}
-        partition_by = ds.get("partition_by", "year:end_date")
-        primary_key = ds.get("primary_key", ["ts_code", "end_date", "report_type"])
-        version_by = ds.get("version_by", ["ann_date", "f_ann_date"])
-        only_latest = not cfg.get("no_only_latest", False)
-        raw_with_flag = _tx_mark_latest(raw_df)
-        written = write_partitioned_dataset(
-            raw_with_flag,
-            root,
-            dataset,
-            partition_by,
-            primary_key,
-            version_by,
-            only_latest=only_latest,
-        )
-        for p in written:
-            print(f"已写入分区文件：{p}")
-
-    # 旧布局：从 tables 推导 single/cum 并写入
-    single_df = tables.get("single")
-    if (
-        (single_df is None or single_df.empty)
-        and raw_df is not None
-        and not raw_df.empty
-    ):
-        single_df = _diff_to_single(raw_df)
-    cum_df = (
-        _single_to_cumulative(single_df)
-        if single_df is not None and not single_df.empty
-        else pd.DataFrame()
-    )
-
-    if single_df is not None and not single_df.empty:
-        from tushare_a_fundamentals.transforms.deduplicate import mark_latest as _mark
-
-        single_df = _mark(single_df)
-        write_partitioned_dataset(
-            single_df,
-            root,
-            "fact_income_single",
-            (
-                ds_cfg.get("datasets", {}).get("income", {}).get("partition_by")
-                or "year:end_date"
-            ),
-            (
-                ds_cfg.get("datasets", {}).get("income", {}).get("primary_key")
-                or ["ts_code", "end_date", "report_type"]
-            ),
-            (
-                ds_cfg.get("datasets", {}).get("income", {}).get("version_by")
-                or ["ann_date", "f_ann_date"]
-            ),
-            only_latest=True,
-        )
-        print("已写入：fact_income_single")
-    if cum_df is not None and not cum_df.empty:
-        from tushare_a_fundamentals.transforms.deduplicate import mark_latest as _mark
-
-        cum_df = _mark(cum_df)
-        write_partitioned_dataset(
-            cum_df,
-            root,
-            "fact_income_cum",
-            (
-                ds_cfg.get("datasets", {}).get("income", {}).get("partition_by")
-                or "year:end_date"
-            ),
-            (
-                ds_cfg.get("datasets", {}).get("income", {}).get("primary_key")
-                or ["ts_code", "end_date", "report_type"]
-            ),
-            (
-                ds_cfg.get("datasets", {}).get("income", {}).get("version_by")
-                or ["ann_date", "f_ann_date"]
-            ),
-            only_latest=True,
-        )
-        print("已写入：fact_income_cum")
-
-    # 写入 inventory_periods（覆盖清单）
-    if periods:
-        inv = pd.DataFrame({"end_date": periods})
-        inv["is_present"] = 1
-        inv = inv.sort_values("end_date")
-        try:
-            from pathlib import Path
-
-            inv_dir = Path(root) / "dataset=inventory_income"
-            inv_dir.mkdir(parents=True, exist_ok=True)
-            inv_path = inv_dir / "periods.parquet"
-            inv.to_parquet(inv_path, index=False)
-            print(f"已写入：{inv_path}")
-        except Exception as exc:
-            eprint(f"警告：写入 inventory_periods 失败：{exc}")
-
-
 def _run_bulk_mode(
     pro, cfg: dict, mode: str, fields: str, fmt: str, outdir: str, prefix: str
 ) -> None:
@@ -792,7 +623,6 @@ def _run_bulk_mode(
         fields=fields,
     )
     save_tables(tables, outdir, base, fmt, cfg.get("export_colname", "ticker"))
-    _write_datasets_from_tables(tables, cfg, periods)
 
 
 def cmd_build(args: argparse.Namespace) -> None:
@@ -900,9 +730,6 @@ def cmd_download(args: argparse.Namespace) -> None:
         "format": "parquet",
         "skip_existing": True,  # download 默认增量
         "token": None,
-        "datasets_config": None,
-        "dataset_root": None,
-        "no_only_latest": False,
         "export_colname": "ticker",
     }
     cli_overrides = {
@@ -917,9 +744,6 @@ def cmd_download(args: argparse.Namespace) -> None:
         "format": getattr(args, "format", None),
         # 注意：skip_existing 默认 True，仅在 --force 时覆盖为 False
         "token": getattr(args, "token", None),
-        "datasets_config": getattr(args, "datasets_config", None),
-        "dataset_root": getattr(args, "dataset_root", None),
-        "no_only_latest": getattr(args, "no_only_latest", None),
         "export_colname": getattr(args, "export_colname", None),
     }
     cfg = merge_config(cli_overrides, cfg_file, defaults)
@@ -964,9 +788,6 @@ def main():
         "format": "parquet",
         "skip_existing": True,  # 顶层无子命令也采用“默认增量补全”
         "token": None,
-        "datasets_config": None,
-        "dataset_root": None,
-        "no_only_latest": False,
         "export_colname": "ticker",
     }
     cli_overrides = {
@@ -981,9 +802,6 @@ def main():
         "format": args.format,
         "skip_existing": args.skip_existing,
         "token": args.token,
-        "datasets_config": args.datasets_config,
-        "dataset_root": args.dataset_root,
-        "no_only_latest": args.no_only_latest,
         "export_colname": args.export_colname,
     }
     cfg = merge_config(cli_overrides, cfg_file, defaults)
