@@ -1,6 +1,6 @@
 # Tushare 基本面数据批量下载器
 
-本项目旨在提供命令行脚本批量抓取 A 股上市公司基本面数据，统一输出年度与季度累计（Q1/H1/Q3/FY）两种口径。
+本项目旨在提供命令行脚本批量抓取 A 股上市公司基本面数据，并允许输出季度累计（Q1/H1/Q3/FY）或者单季两种口径。
 
 ## 批量下载功能开发进度
 
@@ -26,17 +26,35 @@
 
 提示：所有命令行输出与错误信息均为中文；代码实现为英文。
 
-## 快速开始
+## 使用指南
 
-### 依赖
+### 配置
 
-* Python 3.10+
+* `config.yml`（根目录）：CLI 行为（模式、时间范围、输出目录、字段选择等）。
 
-* `pandas`, `pyarrow`, `PyYAML`, `python-dotenv`
+    * 初次使用：从模板复制一份并按需修改：`cp config.example.yaml config.yml`
 
-* 环境变量：`TUSHARE_TOKEN="<your token>"`
+* `configs/datasets.yaml`（本地）：数据湖规范（分区、主键、版本字段等）。
+
+    * 初次使用：从模板复制一份并按需修改：`cp configs/datasets.example.yaml configs/datasets.yaml`
+
+    * 仓库已忽略 `configs/datasets.yaml`，避免彼此覆盖本地路径等私有配置。
+
+* `.env`（本地）：环境变量文件，至少包含 TuShare Token。
+
+    * 初次使用：从模板复制并填入 token：`cp .env.example .env`
+
+    * 说明：程序会通过 python-dotenv 自动读取 `.env`，或从 shell 环境变量读取（变量名：`TUSHARE_TOKEN=<your_tushare_token>`）
+
+* `.envrc`（本地，可选）：开发环境自动化脚本（需安装 direnv）。
+
+    * 初次使用：从模板复制并授权：`cp .envrc.example .envrc && direnv allow`
+
+    * 说明：会自动加载 `.env`，监听关键文件变更，并创建/启用本地虚拟环境 `.venv`（优先使用 uv）。
 
 ### 安装
+
+本项目所需python版本和依赖都以pyproject.toml的方式进行管理。
 
 ```bash
 # 使用 pip 可编辑安装
@@ -48,13 +66,7 @@ uv sync
 
 ### 运行 CLI
 
-```bash
-# 运行帮助
-funda download --help
-```
-
 #### 数据下载
-
 
 ```bash
 # 下载全市场最近 10 年（默认）
@@ -117,8 +129,6 @@ funda build --kinds annual,quarterly \
   --dataset-root data_root
 ```
 
-
-
 ### 分区化数据集写入（可选）
 
 若希望将“最新快照（或全量历史）”写入按年分区的 Parquet 数据集，可提供数据集配置并指定数据根目录：
@@ -133,29 +143,7 @@ funda download --years 3 \
 
 注：`build` 阶段负责从上述数据集导出 annual/quarterly。
 
-## 配置
 
-* `config.yml`（根目录）：CLI 行为（模式、时间范围、输出目录、字段选择等）。
-
-    * 初次使用：从模板复制一份并按需修改：`cp config.example.yaml config.yml`
-
-* `configs/datasets.yaml`（本地）：数据湖规范（分区、主键、版本字段等）。
-
-    * 初次使用：从模板复制一份并按需修改：`cp configs/datasets.example.yaml configs/datasets.yaml`
-
-    * 仓库已忽略 `configs/datasets.yaml`，避免彼此覆盖本地路径等私有配置。
-
-* `.env`（本地）：环境变量文件，至少包含 TuShare Token。
-
-    * 初次使用：从模板复制并填入 token：`cp .env.example .env`
-
-    * 说明：程序会通过 python-dotenv 自动读取 `.env`，或从 shell 环境变量读取（变量名：`TUSHARE_TOKEN=<your_tushare_token>`）
-
-* `.envrc`（本地，可选）：开发环境自动化脚本（需安装 direnv）。
-
-    * 初次使用：从模板复制并授权：`cp .envrc.example .envrc && direnv allow`
-
-    * 说明：会自动加载 `.env`，监听关键文件变更，并创建/启用本地虚拟环境 `.venv`（优先使用 uv）。
 
 ## 开发约定
 
@@ -164,6 +152,12 @@ funda download --years 3 \
 * 状态管理（雏形，尚未接入 CLI）：`src/tushare_a_fundamentals/meta/state_store.py`
 
 ## 常见问题
+
+* CLI运行帮助
+
+    ```bash
+    funda download --help
+    ```
 
 * 字段漂移导致读失败？新增列应设为 nullable，读取时使用统一 schema 合并。
 
