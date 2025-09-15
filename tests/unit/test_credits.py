@@ -1,7 +1,7 @@
 import pandas as pd
 import pytest
 
-from tushare_a_fundamentals.cli import _has_enough_credits
+from tushare_a_fundamentals.common import _has_enough_credits
 
 pytestmark = pytest.mark.unit
 

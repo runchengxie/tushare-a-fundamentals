@@ -2,7 +2,7 @@ import importlib
 
 import pytest
 
-from tushare_a_fundamentals.cli import _check_parquet_dependency
+from tushare_a_fundamentals.common import _check_parquet_dependency
 
 
 def test_parquet_dependency_present():

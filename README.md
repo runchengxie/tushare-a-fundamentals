@@ -112,24 +112,24 @@ funda coverage --dataset-root data_root --by ticker
 
 说明：
 
-* quarterly 由累计值差分得到单季；
+* single 由累计值差分得到单季；
+
+* cumulative 可直接导出季度累计值；
 
 * annual 可选 `cumulative`（12-31）或 `sum4`（四季相加）；
 
-### 离线构建（build，可选）
+### 离线导出（export，可选）
 
-若已准备好以下目录结构的数据集，可用 `build` 构建 annual / quarterly 导出：
-
-* `dataset=fact_income_single/year=YYYY/*.parquet`（最新快照）
+若已准备好以下目录结构的数据集，可用 `export` 构建 annual / single / cumulative 导出：
 
 * `dataset=fact_income_cum/year=YYYY/*.parquet`（最新快照）
 
 * `dataset=inventory_income/periods.parquet`（已有数据的季度清单）
 
-随后可用 `build` 构建 annual / quarterly 导出：
+随后可用 `export` 构建 annual / single / cumulative 导出：
 
 ```bash
-funda build --kinds annual,quarterly \
+funda export --kinds annual,single \
   --annual-strategy cumulative \
   --out-format csv --out-dir out/csv \
   --dataset-root data_root

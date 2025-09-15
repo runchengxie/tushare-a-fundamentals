@@ -1,7 +1,7 @@
 import pandas as pd
 import pytest
 
-from tushare_a_fundamentals import cli as appmod
+from tushare_a_fundamentals.common import _diff_to_single
 
 pytestmark = pytest.mark.unit
 
@@ -14,7 +14,7 @@ def test_diff_to_single_cumulative_to_quarterly():
             "total_revenue": [10.0, 25.0, 45.0],
         }
     )
-    got = appmod._diff_to_single(df)
+    got = _diff_to_single(df)
     q1, q2, q3 = got["total_revenue"].tolist()
     assert q1 == 10.0
     assert q2 == 15.0
