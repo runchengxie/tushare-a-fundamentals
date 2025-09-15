@@ -28,7 +28,7 @@
 
 ## 运行原理/快速运行指南
 
-1. 下载所需数据，通过指令：`funda download`
+1. 下载并构建所需数据，通过指令：`funda download`
 
 2. （可选但建议）检查下载数据是否完整：`funda coverage`
 
@@ -101,6 +101,9 @@ funda download --since 2010-01-01 --until 2019-12-31
 * `--export-colname ts_code`：导出文件保留旧列名 `ts_code`；默认输出列为 `ticker`；
 
 * `--report-types 1,6`：指定报表 `report_type`（逗号分隔），默认仅下载 `1`（合并报表）；
+* `--raw-only`：只下载 raw，不构建数仓；
+* `--build-only`：跳过下载，仅由已有 raw 构建数仓；
+* 默认会依据披露截止日裁掉未来季度，如需强制包含可加 `--allow-future`；
 
 全量下载（建议）：
 
@@ -114,7 +117,7 @@ funda download --since 2010-01-01 --until 2019-12-31
     funda download --years 30
     ```
 
-说明：下载口径固定为“按季度期末日的累计（YTD）值”，当前版本仅导出原始去重表 `raw`。
+说明：下载口径固定为“按季度期末日的累计（YTD）值”，默认还会生成 `dataset=inventory_income` 与 `dataset=fact_income_cum` 两套数仓数据；仅需原始去重表时可追加 `--raw-only`。
 
 #### 数据完整性检测/可视化覆盖情况
 
