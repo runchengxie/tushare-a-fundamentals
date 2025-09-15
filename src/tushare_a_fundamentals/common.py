@@ -3,7 +3,7 @@ import os
 import sys
 import time
 from dataclasses import dataclass
-from typing import Dict, List, Literal, Optional
+from typing import Dict, List, Literal, Optional, Sequence
 
 import pandas as pd
 import yaml
@@ -111,6 +111,23 @@ def merge_config(cli: dict, cfg: dict, defaults: dict) -> dict:
         if v is not None:
             merged[k] = v
     return merged
+
+
+def parse_report_types(value) -> List[int]:
+    """Parse ``report_types`` config into a list of ints.
+
+    Accepts comma-separated strings, single ints, or lists; defaults to ``[1]``
+    when unset.
+    """
+    if value is None:
+        return [1]
+    if isinstance(value, list):
+        return [int(v) for v in value]
+    if isinstance(value, (int, float)):
+        return [int(value)]
+    if isinstance(value, str):
+        return [int(v) for v in value.split(",") if v.strip()]
+    return [1]
 
 
 def init_pro_api(token: Optional[str]):
@@ -295,9 +312,12 @@ def _already_downloaded(
     return True
 
 
-def _select_latest(df: pd.DataFrame) -> pd.DataFrame:
+def _select_latest(
+    df: pd.DataFrame, group_keys: Sequence[str] | None = None
+) -> pd.DataFrame:
     """后向兼容：委托给 transforms.deduplicate.select_latest。"""
-    got = _tx_select_latest(df, group_keys=("ts_code", "end_date"))
+    gkeys = tuple(group_keys or ("ts_code", "end_date"))
+    got = _tx_select_latest(df, group_keys=gkeys)
     if not got.empty:
         keep_cols = list(
             dict.fromkeys(
@@ -355,22 +375,28 @@ def _single_to_cumulative(single_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def fetch_income_bulk(
-    pro, periods: List[str], mode: str, fields: str
+    pro,
+    periods: List[str],
+    mode: str,
+    fields: str,
+    report_types: List[int] | None = None,
 ) -> Dict[str, pd.DataFrame]:
-    """Fetch multiple periods via income_vip and return cumulative tables."""
+    """Fetch multiple periods via ``income_vip`` for given report types."""
     tables: Dict[str, pd.DataFrame] = {}
     all_rows: List[pd.DataFrame] = []
+    rts = report_types or [1]
     for per in periods:
-        params = {"period": per}
-        try:
-            df = _retry_call(pro.income_vip, {"fields": fields, **params})
-        except Exception as exc:
-            eprint(f"警告：期末 {per} 拉取失败：{exc}")
-            continue
-        if df is None or len(df) == 0:
-            eprint(f"警告：期末 {per} 接口返回为空")
-            continue
-        all_rows.append(df)
+        for rt in rts:
+            params = {"period": per, "report_type": rt}
+            try:
+                df = _retry_call(pro.income_vip, {"fields": fields, **params})
+            except Exception as exc:
+                eprint(f"警告：期末 {per} report_type {rt} 拉取失败：{exc}")
+                continue
+            if df is None or len(df) == 0:
+                eprint(f"警告：期末 {per} report_type {rt} 接口返回为空")
+                continue
+            all_rows.append(df)
     if not all_rows:
         eprint("错误：未获取到任何数据")
         sys.exit(3)
@@ -378,7 +404,7 @@ def fetch_income_bulk(
     if raw.empty:
         eprint("错误：未获取到任何数据")
         sys.exit(3)
-    raw = _select_latest(raw)
+    raw = _select_latest(raw, group_keys=("ts_code", "end_date", "report_type"))
     raw = _coerce_numeric(raw, FLOW_FIELDS)
     tables["raw"] = raw
     return tables
@@ -510,5 +536,11 @@ def _run_bulk_mode(
     ):
         print("已存在所需数据，跳过下载")
         return
-    tables = fetch_income_bulk(pro, periods=periods, mode="quarterly", fields=fields)
+    tables = fetch_income_bulk(
+        pro,
+        periods=periods,
+        mode="quarterly",
+        fields=fields,
+        report_types=cfg.get("report_types"),
+    )
     save_tables(tables, outdir, base, fmt, cfg.get("export_colname", "ticker"))

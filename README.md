@@ -87,6 +87,7 @@ funda download --since 2010-01-01 --until 2019-12-31
 * 提供 `--since`（可选 `--until`）时优先使用日期范围；
 
 * `--export-colname ts_code`：导出文件保留旧列名 `ts_code`；默认输出列为 `ticker`；
+* `--report-types 1,6`：指定报表 `report_type`（逗号分隔），默认仅下载 `1`（合并报表）；
 
 全量下载（建议）：
 
