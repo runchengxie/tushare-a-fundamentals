@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pandas as pd
 
-from tushare_a_fundamentals.cli import cmd_coverage
+from tushare_a_fundamentals.commands.coverage import cmd_coverage
 
 
 def _prepare_dataset(root):
@@ -11,7 +11,7 @@ def _prepare_dataset(root):
     pd.DataFrame({"end_date": ["20231231", "20230930"]}).to_parquet(
         inv_dir / "periods.parquet"
     )
-    fact_dir = root / "dataset=fact_income_single"
+    fact_dir = root / "dataset=fact_income_cum"
     fact_dir.mkdir()
     pd.DataFrame(
         {

@@ -1,7 +1,7 @@
 import pandas as pd
 import pytest
 
-from tushare_a_fundamentals import cli as appmod
+from tushare_a_fundamentals.common import _select_latest
 from tushare_a_fundamentals.transforms.deduplicate import (
     mark_latest as _tx_mark_latest,
 )
@@ -19,7 +19,7 @@ def test_select_latest_priority():
             "ann_date": ["20240201", "20240131", "20240209"],
         }
     )
-    got = appmod._select_latest(df)
+    got = _select_latest(df)
     assert len(got) == 1
     assert int(got.iloc[0]["report_type"]) == 1
 
@@ -35,7 +35,7 @@ def test_update_flag_break_tie():
             "update_flag": ["N", "Y"],
         }
     )
-    got = appmod._select_latest(df)
+    got = _select_latest(df)
     assert got.iloc[0]["update_flag"] == "Y"
 
 

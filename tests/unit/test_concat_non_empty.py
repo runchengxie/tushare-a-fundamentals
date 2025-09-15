@@ -2,7 +2,7 @@ import warnings
 
 import pandas as pd
 
-from tushare_a_fundamentals.cli import _concat_non_empty
+from tushare_a_fundamentals.common import _concat_non_empty
 
 
 def test_concat_non_empty_filters_all_na():
