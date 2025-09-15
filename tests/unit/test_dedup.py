@@ -63,3 +63,16 @@ def test_mark_latest_custom_group_keys():
     flagged = _tx_mark_latest(df, group_keys=["ts_code"])
     assert flagged["is_latest"].sum() == 1
     assert flagged.loc[flagged["is_latest"] == 1, "end_date"].iloc[0] == "20231231"
+
+
+def test_select_latest_with_report_type_grouping():
+    df = pd.DataFrame(
+        {
+            "ts_code": ["000001.SZ", "000001.SZ"],
+            "end_date": ["20231231", "20231231"],
+            "report_type": [1, 6],
+            "ann_date": ["20240101", "20240102"],
+        }
+    )
+    got = _select_latest(df, group_keys=("ts_code", "end_date", "report_type"))
+    assert set(got["report_type"]) == {1, 6}

@@ -8,6 +8,7 @@ from .common import (
     init_pro_api,
     load_yaml,
     merge_config,
+    parse_report_types,
 )
 
 
@@ -27,6 +28,11 @@ def parse_cli() -> argparse.Namespace:
     p.add_argument("--outdir", type=str)
     p.add_argument("--prefix", type=str)
     p.add_argument("--format", choices=["csv", "parquet"])
+    p.add_argument(
+        "--report-types",
+        type=str,
+        help="逗号分隔的 report_type 列表（默认 1）",
+    )
     p.add_argument(
         "--export-colname",
         choices=["ticker", "ts_code"],
@@ -87,6 +93,11 @@ def parse_cli() -> argparse.Namespace:
     sp_dl.add_argument("--prefix", type=str)
     sp_dl.add_argument("--format", choices=["csv", "parquet"])
     sp_dl.add_argument(
+        "--report-types",
+        type=str,
+        help="逗号分隔的 report_type 列表（默认 1）",
+    )
+    sp_dl.add_argument(
         "--export-colname",
         choices=["ticker", "ts_code"],
         default="ticker",
@@ -128,6 +139,7 @@ def main() -> None:
         "skip_existing": True,
         "token": None,
         "export_colname": "ticker",
+        "report_types": [1],
     }
     cli_overrides = {
         "years": args.years,
@@ -141,8 +153,10 @@ def main() -> None:
         "skip_existing": args.skip_existing,
         "token": args.token,
         "export_colname": args.export_colname,
+        "report_types": getattr(args, "report_types", None),
     }
     cfg = merge_config(cli_overrides, cfg_file, defaults)
+    cfg["report_types"] = parse_report_types(cfg.get("report_types"))
     if getattr(args, "force", False):
         cfg["skip_existing"] = False
     pro = init_pro_api(cfg.get("token"))

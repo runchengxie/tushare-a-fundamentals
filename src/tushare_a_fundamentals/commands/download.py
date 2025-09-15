@@ -8,6 +8,7 @@ from ..common import (
     init_pro_api,
     load_yaml,
     merge_config,
+    parse_report_types,
 )
 
 
@@ -25,6 +26,7 @@ def cmd_download(args: argparse.Namespace) -> None:
         "skip_existing": True,  # download 默认增量
         "token": None,
         "export_colname": "ticker",
+        "report_types": [1],
     }
     cli_overrides = {
         "years": getattr(args, "years", None),
@@ -37,8 +39,10 @@ def cmd_download(args: argparse.Namespace) -> None:
         "format": getattr(args, "format", None),
         "token": getattr(args, "token", None),
         "export_colname": getattr(args, "export_colname", None),
+        "report_types": getattr(args, "report_types", None),
     }
     cfg = merge_config(cli_overrides, cfg_file, defaults)
+    cfg["report_types"] = parse_report_types(cfg.get("report_types"))
     if getattr(args, "force", False):
         cfg["skip_existing"] = False
     pro = init_pro_api(cfg.get("token"))

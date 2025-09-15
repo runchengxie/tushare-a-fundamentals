@@ -5,6 +5,8 @@ fields: "ts_code,ann_date,f_ann_date,end_date,report_type,comp_type,update_flag,
 outdir: "out"
 prefix: "income"
 format: "parquet"
+# 默认仅下载合并报表（report_type=1），可填逗号分隔列表
+report_types: "1"
 # download 子命令默认采用增量补全（若已覆盖所需 period 则跳过）
 skip_existing: true
 # export_colname: ticker  # or ts_code
