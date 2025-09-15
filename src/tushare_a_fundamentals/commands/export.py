@@ -9,6 +9,7 @@ from ..common import FLOW_FIELDS, _diff_to_single, _export_tables, _load_dataset
 
 def cmd_export(args: argparse.Namespace) -> None:
     root = args.dataset_root
+    years = getattr(args, "years", 10)
     kinds = [s.strip() for s in args.kinds.split(",") if s.strip()]
     out_fmt = args.out_format
     out_dir = args.out_dir
@@ -17,6 +18,10 @@ def cmd_export(args: argparse.Namespace) -> None:
     cum = _load_dataset(root, "fact_income_cum")
     if "is_latest" in cum.columns:
         cum = cum[cum["is_latest"] == 1]
+    periods = sorted(cum["end_date"].astype(str).unique())
+    if years is not None:
+        keep = set(periods[-years * 4 :])
+        cum = cum[cum["end_date"].astype(str).isin(keep)]
 
     built: Dict[str, pd.DataFrame] = {}
 

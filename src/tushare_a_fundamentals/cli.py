@@ -48,7 +48,10 @@ def parse_cli() -> argparse.Namespace:
     sp_exp = sub.add_parser(
         "export", help="由本地事实表构建 annual/single/cumulative 导出"
     )
-    sp_exp.add_argument("--dataset-root", type=str, required=True)
+    sp_exp.add_argument(
+        "--dataset-root", type=str, default="out", help="数据集根目录（默认 out）"
+    )
+    sp_exp.add_argument("--years", type=int, default=10, help="近几年（默认 10）")
     sp_exp.add_argument(
         "--export-colname",
         choices=["ticker", "ts_code"],
@@ -72,7 +75,10 @@ def parse_cli() -> argparse.Namespace:
     sp_exp.add_argument("--prefix", type=str, default="income")
 
     sp_cov = sub.add_parser("coverage", help="盘点已覆盖的股票×期末日")
-    sp_cov.add_argument("--dataset-root", type=str, required=True)
+    sp_cov.add_argument(
+        "--dataset-root", type=str, default="out", help="数据集根目录（默认 out）"
+    )
+    sp_cov.add_argument("--years", type=int, default=10, help="近几年（默认 10）")
     sp_cov.add_argument(
         "--by",
         choices=["ticker", "ts_code", "period"],

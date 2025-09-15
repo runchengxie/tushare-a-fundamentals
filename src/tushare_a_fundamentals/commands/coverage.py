@@ -9,6 +9,7 @@ from ..common import _load_dataset, eprint
 
 def cmd_coverage(args: argparse.Namespace) -> None:
     root = Path(args.dataset_root)
+    years = getattr(args, "years", 10)
     inv_path = root / "dataset=inventory_income" / "periods.parquet"
     try:
         inv = pd.read_parquet(inv_path)
@@ -16,9 +17,12 @@ def cmd_coverage(args: argparse.Namespace) -> None:
         eprint(f"错误：读取 {inv_path} 失败：{exc}")
         sys.exit(2)
     periods = sorted(inv["end_date"].astype(str).tolist())
+    if years is not None:
+        periods = periods[-years * 4 :]
     single = _load_dataset(str(root), "fact_income_cum")
     if "is_latest" in single.columns:
         single = single[single["is_latest"] == 1]
+    single = single[single["end_date"].astype(str).isin(periods)]
     codes = sorted(single["ts_code"].unique())
     full = pd.MultiIndex.from_product(
         [codes, periods], names=["ts_code", "end_date"]

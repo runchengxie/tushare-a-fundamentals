@@ -35,3 +35,30 @@ def test_cmd_coverage_by(tmp_path, capsys):
     cmd_coverage(args)
     out = capsys.readouterr().out
     assert "20230930" in out
+
+
+def test_cmd_coverage_years(tmp_path, capsys):
+    inv_dir = tmp_path / "dataset=inventory_income"
+    inv_dir.mkdir()
+    periods = [
+        "20211231",
+        "20220331",
+        "20220630",
+        "20220930",
+        "20221231",
+    ]
+    pd.DataFrame({"end_date": periods}).to_parquet(inv_dir / "periods.parquet")
+    fact_dir = tmp_path / "dataset=fact_income_cum"
+    fact_dir.mkdir()
+    pd.DataFrame(
+        {
+            "ts_code": ["000001.SZ"] * len(periods),
+            "end_date": periods,
+            "is_latest": [1] * len(periods),
+        }
+    ).to_parquet(fact_dir / "data.parquet")
+    args = SimpleNamespace(dataset_root=str(tmp_path), by="period", years=1)
+    cmd_coverage(args)
+    out = capsys.readouterr().out
+    assert "20211231" not in out
+    assert "20221231" in out
