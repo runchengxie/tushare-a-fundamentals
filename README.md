@@ -116,10 +116,10 @@ funda download --since 2010-01-01 --until 2019-12-31
 #### 数据完整性检测/可视化覆盖情况
 
 ```bash
-funda coverage --dataset-root data_root --by ticker
+funda coverage --by ticker
 ```
 
-默认按 `ticker` 输出股票×期末日覆盖矩阵，可使用 `--by period` 按期汇总。
+默认按 `ticker` 输出股票×期末日覆盖矩阵，可使用 `--by period` 按期汇总。数据集根目录默认为 `out`，可用 `--dataset-root` 指定，`--years` 可调整年份窗口（默认近 10 年）。
 
 说明：
 
@@ -140,11 +140,12 @@ funda coverage --dataset-root data_root --by ticker
 随后可用 `export` 构建 annual / single / cumulative 导出：
 
 ```bash
-funda export --kinds annual,single \
-  --annual-strategy cumulative \
-  --out-format csv --out-dir out/csv \
-  --dataset-root data_root
+funda export --kinds annual,single \\
+  --annual-strategy cumulative \\
+  --out-format csv --out-dir out/csv
 ```
+
+同样默认读取 `out` 目录下的数据集，并导出最近 10 年，可通过 `--dataset-root` 或 `--years` 参数微调。
 
 ## 开发约定
 
