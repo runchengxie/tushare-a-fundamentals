@@ -119,7 +119,7 @@ funda coverage --dataset-root data_root --by ticker
 
 * annual 可选 `cumulative`（12-31）或 `sum4`（四季相加）；
 
-### 离线导出（export，可选）
+#### 数据导出成csv
 
 若已准备好以下目录结构的数据集，可用 `export` 构建 annual / single / cumulative 导出：
 
