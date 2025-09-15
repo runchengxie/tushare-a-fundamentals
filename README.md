@@ -28,6 +28,18 @@
 
 ## 使用流程指南
 
+### 运行原理
+
+1. 下载所需数据，通过指令：`funda download`
+
+2. （可选但建议）检查下载数据是否完整：`funda coverage`
+
+3. 数据导出：`funda export`
+
+* 备注1：上述指令默认下载，检查，并导出近10年数据，但是必要时可通过后缀来微调行为，例如只下载近五年的数据，或者近下载某个股票代码的数据
+
+* 每注2：近10年数据是指，从最近一个数据可用的季度开始算起，逆推过去10年（也就是40个季度）
+
 ### 配置
 
 * `config.yml`（根目录）：CLI 行为（模式、时间范围、输出目录、字段选择等）。
@@ -121,7 +133,7 @@ funda coverage --dataset-root data_root --by ticker
 
 #### 数据导出成csv
 
-若已准备好以下目录结构的数据集，可用 `export` 构建 annual / single / cumulative 导出：
+若已完成数据下载并且通过数据完整性检验确认后已有想要的数据，可用 `export` 构建按年度数据（指令：annual）/ 季度累计（指令：cumulative）/单季（指令：single）导出：
 
 * `dataset=fact_income_cum/year=YYYY/*.parquet`（最新快照）
 
