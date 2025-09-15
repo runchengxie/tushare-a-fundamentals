@@ -3,11 +3,15 @@ import os
 import sys
 import time
 from dataclasses import dataclass
+from datetime import date
 from typing import Dict, List, Literal, Optional, Sequence
 
 import pandas as pd
 import yaml
 
+from tushare_a_fundamentals.transforms.deduplicate import (
+    mark_latest as _tx_mark_latest,
+)
 from tushare_a_fundamentals.transforms.deduplicate import (
     select_latest as _tx_select_latest,
 )
@@ -196,6 +200,22 @@ def periods_by_quarters(quarters: int) -> List[str]:
             ci = 3
             cy -= 1
     return sorted(res)
+
+
+def last_publishable_period(today: date) -> str:
+    """Return the last period expected to be publishable at ``today``."""
+    y = today.year
+    checkpoints = [
+        (date(y, 4, 30), f"{y}0331"),
+        (date(y, 8, 31), f"{y}0630"),
+        (date(y, 10, 31), f"{y}0930"),
+        (date(y + 1, 4, 30), f"{y}1231"),
+    ]
+    last = f"{y - 1}1231"
+    for ddl, per in checkpoints:
+        if today >= ddl:
+            last = per
+    return last
 
 
 def _retry_call(func, kwargs, max_tries=5, base_sleep=0.8):
@@ -484,10 +504,15 @@ def _periods_from_cfg(cfg: dict) -> List[str]:
     - 否则按 years 与 mode 计算（years 默认为 10）。
     """
     if cfg.get("since"):
-        return _periods_from_range("quarterly", cfg["since"], cfg.get("until"))
-    if cfg.get("quarters") and cfg["quarters"] > 0:
-        return periods_by_quarters(cfg["quarters"])
-    return periods_for_mode_by_years(cfg.get("years", 10), Mode.QUARTERLY)
+        periods = _periods_from_range("quarterly", cfg["since"], cfg.get("until"))
+    elif cfg.get("quarters") and cfg["quarters"] > 0:
+        periods = periods_by_quarters(cfg["quarters"])
+    else:
+        periods = periods_for_mode_by_years(cfg.get("years", 10), Mode.QUARTERLY)
+    if not cfg.get("allow_future"):
+        limit = last_publishable_period(date.today())
+        periods = [p for p in periods if p <= limit]
+    return periods
 
 
 def _load_dataset(root: str, dataset: str) -> pd.DataFrame:
@@ -505,6 +530,39 @@ def _load_dataset(root: str, dataset: str) -> pd.DataFrame:
         sys.exit(2)
     dfs = [pd.read_parquet(p) for p in files]
     return _concat_non_empty(dfs)
+
+
+def build_datasets_from_raw(outdir: str, prefix: str) -> None:
+    """Build inventory and fact datasets from raw parquet file."""
+    raw_path = os.path.join(outdir, "parquet", f"{prefix}_vip_quarterly_raw.parquet")
+    if not os.path.exists(raw_path):
+        eprint(f"警告：未找到 {raw_path}，跳过数仓构建")
+        return
+    try:
+        raw = pd.read_parquet(raw_path)
+    except Exception as exc:
+        eprint(f"警告：读取 {raw_path} 失败：{exc}")
+        return
+    inv_dir = os.path.join(outdir, "dataset=inventory_income")
+    os.makedirs(inv_dir, exist_ok=True)
+    periods = (
+        pd.Series(raw["end_date"].astype(str))
+        .dropna()
+        .drop_duplicates()
+        .sort_values()
+        .to_frame(name="end_date")
+    )
+    periods.to_parquet(os.path.join(inv_dir, "periods.parquet"), index=False)
+    fact_root = os.path.join(outdir, "dataset=fact_income_cum")
+    flagged = _tx_mark_latest(raw, group_keys=("ts_code", "end_date"))
+    latest = flagged[flagged["is_latest"] == 1].copy()
+    latest["year"] = latest["end_date"].astype(str).str[:4]
+    for y, dfy in latest.groupby("year"):
+        year_dir = os.path.join(fact_root, f"year={y}")
+        os.makedirs(year_dir, exist_ok=True)
+        dfy.drop(columns=["year"]).to_parquet(
+            os.path.join(year_dir, "part.parquet"), index=False
+        )
 
 
 def _export_tables(

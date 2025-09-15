@@ -9,5 +9,6 @@ format: "parquet"
 report_types: "1"
 # The 'download' subcommand uses incremental completion by default (skips if the required period is already covered).
 skip_existing: true
+# allow_future: false  # 设为 true 可拉取尚未披露的未来季度
 # export_colname: ticker
 # token: "your_tushare_token"

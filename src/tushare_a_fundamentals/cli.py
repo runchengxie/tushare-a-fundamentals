@@ -115,6 +115,22 @@ def parse_cli() -> argparse.Namespace:
         action="store_true",
         help="强制重新下载并覆盖已有文件（忽略增量跳过）",
     )
+    flag_group = sp_dl.add_mutually_exclusive_group()
+    flag_group.add_argument(
+        "--raw-only",
+        action="store_true",
+        help="仅下载 raw，不构建数仓",
+    )
+    flag_group.add_argument(
+        "--build-only",
+        action="store_true",
+        help="跳过下载，仅由 raw 构建数仓",
+    )
+    sp_dl.add_argument(
+        "--allow-future",
+        action="store_true",
+        help="允许请求尚未披露的未来季度",
+    )
     return p.parse_args()
 
 
