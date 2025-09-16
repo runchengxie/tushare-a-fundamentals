@@ -7,8 +7,9 @@ prefix: "income"
 format: "parquet"
 # By default, only consolidated reports (report_type=1) are downloaded. A comma-separated list can be provided.
 report_types: "1"
-# The 'download' subcommand uses incremental completion by default (skips if the required period is already covered).
-skip_existing: true
+# The 'download' subcommand defaults to patch missing periods plus a rolling refresh window.
+# Set skip_existing to true to disable rolling refresh (only fetch missing combos).
+skip_existing: false
+recent_quarters: 8
 # allow_future: false  # 设为 true 可拉取尚未披露的未来季度
-# export_colname: ticker
 # token: "your_tushare_token"

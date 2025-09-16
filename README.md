@@ -88,7 +88,9 @@ funda download --since 2010-01-01 --until 2019-12-31
 
 下载模式：
 
-* 默认增量补全：若项目数据库已包含所需季度对应的数据则跳过下载
+* 默认补缺 + 滚动刷新：若检测到缺口会补齐历史数据，并额外重抓最近 8 个季度（可用 `--recent-quarters` 调整）
+
+* 仅补缺：追加 `--skip-existing`，跳过滚动刷新，仅抓取缺失组合
 
 * 强制覆盖：追加 `--force`，无条件重新下载并覆盖输出文件（用于当部分公司进行回溯调整后，用户得以刷新数据库里的旧数据）
 
@@ -98,11 +100,16 @@ funda download --since 2010-01-01 --until 2019-12-31
 
 * 提供 `--since`（可选 `--until`）时优先使用日期范围；
 
-* `--export-colname ts_code`：导出文件保留旧列名 `ts_code`；默认输出列为 `ticker`；
-
 * `--report-types 1,6`：指定报表 `report_type`（逗号分隔），默认仅下载 `1`（合并报表）；
+
+* `--recent-quarters N`：滚动刷新最近 N 个季度（默认 8，设置为 0 可完全关闭刷新窗口）；
+
+* `--skip-existing`：仅补缺，不进行滚动刷新；
+
 * `--raw-only`：只下载 raw，不构建数仓；
+
 * `--build-only`：跳过下载，仅由已有 raw 构建数仓；
+
 * 默认会依据披露截止日裁掉未来季度，如需强制包含可加 `--allow-future`；
 
 全量下载（建议）：
@@ -125,7 +132,7 @@ funda download --since 2010-01-01 --until 2019-12-31
 funda coverage --by ticker
 ```
 
-默认按 `ticker` 输出股票×期末日覆盖矩阵，可使用 `--by period` 按期汇总。数据集根目录默认为 `out`，可用 `--dataset-root` 指定，`--years` 可调整年份窗口（默认近 10 年）。
+默认会先输出覆盖率摘要，再按 `--by` 生成矩阵（数值约定：`1=覆盖`、`0=缺口`、`-1=豁免`）。追加 `--csv path/to/gaps.csv` 可导出缺口清单。数据集根目录默认为 `out`，可用 `--dataset-root` 指定，`--years` 可调整年份窗口（默认近 10 年）。
 
 说明：
 
@@ -152,6 +159,7 @@ funda export --kinds annual,single \\
 ```
 
 同样默认读取 `out` 目录下的数据集，并导出最近 10 年，可通过 `--dataset-root` 或 `--years` 参数微调。
+导出的结果统一使用 `ts_code` 作为证券主键，并按 `ts_code`、`end_date` 排序。
 
 ## 开发约定
 
@@ -166,6 +174,8 @@ funda export --kinds annual,single \\
     ```
 
 * 字段漂移导致读失败？新增列应设为 nullable，读取时使用统一 schema 合并。
+
+* 历史 parquet 仍保留 `ticker` 列？运行 `python tools/migrate_ts_code_column.py --dry-run` 预览，确认后去掉 `--dry-run` 批量重命名为 `ts_code`。
 
 ## 参考Tushare API文档
 

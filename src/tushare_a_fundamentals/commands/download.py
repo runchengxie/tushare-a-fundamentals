@@ -25,11 +25,11 @@ def cmd_download(args: argparse.Namespace) -> None:
         "outdir": "out",
         "prefix": "income",
         "format": "parquet",
-        "skip_existing": True,  # download 默认增量
+        "skip_existing": False,
         "token": None,
-        "export_colname": "ticker",
         "report_types": [1],
         "allow_future": False,
+        "recent_quarters": 8,
     }
     cli_overrides = {
         "years": getattr(args, "years", None),
@@ -41,9 +41,9 @@ def cmd_download(args: argparse.Namespace) -> None:
         "prefix": getattr(args, "prefix", None),
         "format": getattr(args, "format", None),
         "token": getattr(args, "token", None),
-        "export_colname": getattr(args, "export_colname", None),
         "report_types": getattr(args, "report_types", None),
         "allow_future": getattr(args, "allow_future", None),
+        "recent_quarters": getattr(args, "recent_quarters", None),
     }
     cfg = merge_config(cli_overrides, cfg_file, defaults)
     cfg["report_types"] = parse_report_types(cfg.get("report_types"))

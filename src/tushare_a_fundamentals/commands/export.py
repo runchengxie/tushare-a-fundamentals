@@ -4,7 +4,14 @@ from typing import Dict
 
 import pandas as pd
 
-from ..common import FLOW_FIELDS, _diff_to_single, _export_tables, _load_dataset, eprint
+from ..common import (
+    FLOW_FIELDS,
+    _diff_to_single,
+    _export_tables,
+    _load_dataset,
+    ensure_ts_code,
+    eprint,
+)
 
 
 def cmd_export(args: argparse.Namespace) -> None:
@@ -15,7 +22,7 @@ def cmd_export(args: argparse.Namespace) -> None:
     out_dir = args.out_dir
     prefix = args.prefix
 
-    cum = _load_dataset(root, "fact_income_cum")
+    cum = ensure_ts_code(_load_dataset(root, "fact_income_cum"), context="export")
     if "is_latest" in cum.columns:
         cum = cum[cum["is_latest"] == 1]
     periods = sorted(cum["end_date"].astype(str).unique())
@@ -26,11 +33,17 @@ def cmd_export(args: argparse.Namespace) -> None:
     built: Dict[str, pd.DataFrame] = {}
 
     if "cumulative" in kinds:
-        built["cumulative"] = cum.copy()
+        built["cumulative"] = cum.sort_values([
+            "ts_code",
+            "end_date",
+        ]).reset_index(drop=True)
 
     single = _diff_to_single(cum)
     if "single" in kinds:
-        built["single"] = single.copy()
+        built["single"] = single.sort_values([
+            "ts_code",
+            "end_date",
+        ]).reset_index(drop=True)
 
     if "annual" in kinds:
         if args.annual_strategy == "cumulative":
@@ -60,9 +73,12 @@ def cmd_export(args: argparse.Namespace) -> None:
                 ]
             )
         built["annual"] = annual
+        built["annual"] = built["annual"].sort_values(
+            ["ts_code", "end_date"]
+        ).reset_index(drop=True)
 
     if not built:
         eprint("错误：未选择任何导出口径")
         sys.exit(2)
 
-    _export_tables(built, out_dir, prefix, out_fmt, args.export_colname)
+    _export_tables(built, out_dir, prefix, out_fmt)

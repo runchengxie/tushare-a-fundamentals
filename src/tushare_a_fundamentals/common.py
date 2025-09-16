@@ -4,7 +4,7 @@ import sys
 import time
 from dataclasses import dataclass
 from datetime import date
-from typing import Dict, List, Literal, Optional, Sequence
+from typing import Dict, List, Literal, Optional, Sequence, Set, Tuple
 
 import pandas as pd
 import yaml
@@ -307,37 +307,14 @@ def _check_parquet_dependency() -> bool:
     return False
 
 
-def _kinds_for_mode(mode: str) -> List[str]:
-    return ["raw"]
-
-
-def _already_downloaded(
-    outdir: str, base: str, fmt: str, periods: List[str], kinds: List[str]
-) -> bool:
-    fmt_dir = "csv" if fmt == "csv" else "parquet"
-    for kind in kinds:
-        path = os.path.join(outdir, fmt_dir, f"{base}_{kind}.{fmt}")
-        if not os.path.exists(path):
-            return False
-        try:
-            if fmt == "csv":
-                df = pd.read_csv(path, usecols=["end_date"])
-            else:
-                df = pd.read_parquet(path, columns=["end_date"])
-        except Exception:
-            return False
-        existing = set(df["end_date"].astype(str))
-        if not set(periods).issubset(existing):
-            return False
-    return True
-
-
 def _select_latest(
-    df: pd.DataFrame, group_keys: Sequence[str] | None = None
+    df: pd.DataFrame,
+    group_keys: Sequence[str] | None = None,
+    extra_sort_keys: Sequence[str] | None = None,
 ) -> pd.DataFrame:
     """后向兼容：委托给 transforms.deduplicate.select_latest。"""
     gkeys = tuple(group_keys or ("ts_code", "end_date"))
-    got = _tx_select_latest(df, group_keys=gkeys)
+    got = _tx_select_latest(df, group_keys=gkeys, extra_sort_keys=extra_sort_keys)
     if not got.empty:
         keep_cols = list(
             dict.fromkeys(
@@ -360,6 +337,18 @@ def _coerce_numeric(df: pd.DataFrame, cols: List[str]) -> pd.DataFrame:
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors="coerce")
     return df
+
+
+def ensure_ts_code(df: pd.DataFrame, *, context: str | None = None) -> pd.DataFrame:
+    """Ensure the dataframe exposes ``ts_code`` as the security identifier."""
+
+    if "ts_code" in df.columns:
+        return df
+    if "ticker" in df.columns:
+        renamed = df.rename(columns={"ticker": "ts_code"})
+        return renamed
+    ctx = f"（{context}）" if context else ""
+    raise KeyError(f"数据缺少 ts_code 列{ctx}")
 
 
 def _diff_to_single(df: pd.DataFrame) -> pd.DataFrame:
@@ -400,13 +389,31 @@ def fetch_income_bulk(
     mode: str,
     fields: str,
     report_types: List[int] | None = None,
+    period_report_pairs: Optional[Set[Tuple[str, int]]] = None,
+    missing_detail: Optional[Dict[Tuple[str, int], Set[str]]] = None,
+    refresh_pairs: Optional[Set[Tuple[str, int]]] = None,
+    initial_load: bool = False,
 ) -> Dict[str, pd.DataFrame]:
     """Fetch multiple periods via ``income_vip`` for given report types."""
     tables: Dict[str, pd.DataFrame] = {}
     all_rows: List[pd.DataFrame] = []
-    rts = report_types or [1]
+    rts = [int(v) for v in (report_types or [1])]
+    allowed_pairs: Optional[Set[Tuple[str, int]]] = None
+    if period_report_pairs:
+        allowed_pairs = {(str(p), int(rt)) for p, rt in period_report_pairs}
+    refresh_lookup: Set[Tuple[str, int]] = set()
+    if refresh_pairs:
+        refresh_lookup = {(str(p), int(rt)) for p, rt in refresh_pairs}
+    detail_lookup: Dict[Tuple[str, int], Set[str]] = {}
+    if missing_detail:
+        detail_lookup = {
+            (str(p), int(rt)): codes for (p, rt), codes in missing_detail.items()
+        }
+    future_limit = last_publishable_period(date.today())
     for per in periods:
         for rt in rts:
+            if allowed_pairs is not None and (per, int(rt)) not in allowed_pairs:
+                continue
             params = {"period": per, "report_type": rt}
             try:
                 df = _retry_call(pro.income_vip, {"fields": fields, **params})
@@ -414,8 +421,28 @@ def fetch_income_bulk(
                 eprint(f"警告：期末 {per} report_type {rt} 拉取失败：{exc}")
                 continue
             if df is None or len(df) == 0:
-                eprint(f"警告：期末 {per} report_type {rt} 接口返回为空")
+                pair = (per, int(rt))
+                codes_missing = detail_lookup.get(pair)
+                if per > future_limit:
+                    reason = "未来期间未披露"
+                elif codes_missing and len(codes_missing) > 0:
+                    reason = (
+                        f"报告口径缺失，涉及 {len(codes_missing)} 个 ts_code"
+                    )
+                elif pair in refresh_lookup:
+                    reason = "滚动刷新：暂无新增"
+                elif codes_missing is not None:
+                    reason = "历史无返回（可能上市前或接口未开放）"
+                elif initial_load:
+                    reason = "初次下载暂未返回（可能上市前）"
+                else:
+                    reason = "接口返回为空"
+                eprint(
+                    f"警告：期末 {per} report_type {rt} 无返回：{reason}"
+                )
                 continue
+            df = df.copy()
+            df["retrieved_at"] = pd.Timestamp.utcnow()
             all_rows.append(df)
     if not all_rows:
         eprint("错误：未获取到任何数据")
@@ -424,7 +451,11 @@ def fetch_income_bulk(
     if raw.empty:
         eprint("错误：未获取到任何数据")
         sys.exit(3)
-    raw = _select_latest(raw, group_keys=("ts_code", "end_date", "report_type"))
+    raw = _select_latest(
+        raw,
+        group_keys=("ts_code", "end_date", "report_type"),
+        extra_sort_keys=("retrieved_at",),
+    )
     raw = _coerce_numeric(raw, FLOW_FIELDS)
     tables["raw"] = raw
     return tables
@@ -439,7 +470,6 @@ def save_tables(
     outdir: str,
     base: str,
     fmt: str,
-    export_colname: str = "ticker",
 ) -> None:
     _ensure_outdir(outdir)
     reports_dir = os.path.join(outdir, "reports")
@@ -458,8 +488,6 @@ def save_tables(
             if os.path.exists(fpath):
                 print(f"已存在（覆盖）：{fpath}")
             out_df = df.copy()
-            if export_colname == "ticker" and "ts_code" in out_df.columns:
-                out_df = out_df.rename(columns={"ts_code": "ticker"})
             if fmt == "csv":
                 out_df.to_csv(fpath, index=False)
             else:
@@ -468,6 +496,137 @@ def save_tables(
         except Exception as exc:
             eprint(f"错误：保存失败 {fpath}：{exc}")
             sys.exit(4)
+
+
+def _load_existing_raw(outdir: str, base: str, fmt: str) -> pd.DataFrame:
+    fmt_dir = "csv" if fmt == "csv" else "parquet"
+    raw_path = os.path.join(outdir, fmt_dir, f"{base}_raw.{fmt}")
+    if not os.path.exists(raw_path):
+        return pd.DataFrame()
+    try:
+        if fmt == "csv":
+            df = pd.read_csv(raw_path)
+        else:
+            df = pd.read_parquet(raw_path)
+    except Exception as exc:
+        eprint(f"警告：读取 {raw_path} 失败：{exc}，视为无历史数据")
+        return pd.DataFrame()
+    df = ensure_ts_code(df, context=raw_path)
+    if "retrieved_at" in df.columns:
+        df["retrieved_at"] = pd.to_datetime(df["retrieved_at"], errors="coerce")
+    else:
+        df["retrieved_at"] = pd.NaT
+    df["end_date"] = df["end_date"].astype(str)
+    if "report_type" in df.columns:
+        df["report_type"] = pd.to_numeric(df["report_type"], errors="coerce").astype(
+            "Int64"
+        )
+    return df
+
+
+def _plan_period_report_pairs(
+    existing_raw: pd.DataFrame,
+    periods: List[str],
+    report_types: List[int],
+    recent_quarters: int,
+) -> Tuple[Set[Tuple[str, int]], Set[Tuple[str, int]], Dict[Tuple[str, int], Set[str]]]:
+    sorted_periods = sorted({str(p) for p in periods})
+    if not sorted_periods:
+        return set(), set(), {}
+    rts = [int(v) for v in (report_types or [1])]
+    planned: Set[Tuple[str, int]] = set()
+    missing_pairs: Set[Tuple[str, int]] = set()
+    missing_detail: Dict[Tuple[str, int], Set[str]] = {}
+    if existing_raw is None or existing_raw.empty:
+        for per in sorted_periods:
+            for rt in rts:
+                planned.add((per, rt))
+                missing_pairs.add((per, rt))
+                missing_detail.setdefault((per, rt), set())
+        return planned, missing_pairs, missing_detail
+
+    df = existing_raw.copy()
+    df = ensure_ts_code(df)
+    df["end_date"] = df["end_date"].astype(str)
+    if "report_type" not in df.columns:
+        df["report_type"] = pd.Series([pd.NA] * len(df), dtype="Int64")
+    else:
+        df["report_type"] = pd.to_numeric(df["report_type"], errors="coerce").astype(
+            "Int64"
+        )
+    codes = sorted(df["ts_code"].dropna().astype(str).unique())
+    earliest_map = (
+        df.groupby("ts_code")["end_date"].min().dropna().astype(str).to_dict()
+    )
+    if not codes:
+        for per in sorted_periods:
+            for rt in rts:
+                planned.add((per, rt))
+                missing_pairs.add((per, rt))
+                missing_detail.setdefault((per, rt), set())
+    else:
+        existing_clean = df.dropna(subset=["report_type"])
+        existing_keys = {
+            (code, end, int(rt))
+            for code, end, rt in zip(
+                existing_clean["ts_code"].astype(str),
+                existing_clean["end_date"].astype(str),
+                existing_clean["report_type"].astype(int),
+            )
+        }
+        target_keys: Set[Tuple[str, str, int]] = set()
+        for code in codes:
+            first_period = earliest_map.get(code)
+            for per in sorted_periods:
+                if first_period and per < first_period:
+                    continue
+                for rt in rts:
+                    target_keys.add((code, per, rt))
+        missing_keys = target_keys - existing_keys
+        for _code, per, rt in missing_keys:
+            planned.add((per, rt))
+            missing_pairs.add((per, rt))
+            missing_detail.setdefault((per, rt), set()).add(_code)
+
+    if recent_quarters and recent_quarters > 0:
+        recent = sorted_periods[-recent_quarters:]
+        for per in recent:
+            for rt in rts:
+                planned.add((per, rt))
+    return planned, missing_pairs, missing_detail
+
+
+def _merge_raw_tables(
+    existing_raw: pd.DataFrame, new_raw: pd.DataFrame
+) -> pd.DataFrame:
+    frames: List[pd.DataFrame] = []
+    if existing_raw is not None and not existing_raw.empty:
+        frames.append(existing_raw)
+    if new_raw is not None and not new_raw.empty:
+        frames.append(new_raw)
+    if not frames:
+        return pd.DataFrame()
+    combined = _concat_non_empty(frames)
+    if combined.empty:
+        return combined
+    combined = ensure_ts_code(combined)
+    combined["end_date"] = combined["end_date"].astype(str)
+    if "retrieved_at" in combined.columns:
+        combined["retrieved_at"] = pd.to_datetime(
+            combined["retrieved_at"], errors="coerce"
+        )
+    else:
+        combined["retrieved_at"] = pd.NaT
+    if "report_type" in combined.columns:
+        combined["report_type"] = pd.to_numeric(
+            combined["report_type"], errors="coerce"
+        ).astype("Int64")
+    merged = _select_latest(
+        combined,
+        group_keys=("ts_code", "end_date", "report_type"),
+        extra_sort_keys=("retrieved_at",),
+    )
+    return merged.reset_index(drop=True)
 
 
 def _periods_from_range(periods: str, since: str, until: Optional[str]) -> List[str]:
@@ -528,8 +687,14 @@ def _load_dataset(root: str, dataset: str) -> pd.DataFrame:
     if not files:
         eprint(f"错误：数据集为空：{base}")
         sys.exit(2)
-    dfs = [pd.read_parquet(p) for p in files]
-    return _concat_non_empty(dfs)
+    dfs: list[pd.DataFrame] = []
+    for p in files:
+        df = pd.read_parquet(p)
+        dfs.append(ensure_ts_code(df, context=p))
+    combined = _concat_non_empty(dfs)
+    if combined.empty:
+        return combined
+    return ensure_ts_code(combined, context=f"dataset={dataset}")
 
 
 def build_datasets_from_raw(outdir: str, prefix: str) -> None:
@@ -543,6 +708,7 @@ def build_datasets_from_raw(outdir: str, prefix: str) -> None:
     except Exception as exc:
         eprint(f"警告：读取 {raw_path} 失败：{exc}")
         return
+    raw = ensure_ts_code(raw, context=raw_path)
     inv_dir = os.path.join(outdir, "dataset=inventory_income")
     os.makedirs(inv_dir, exist_ok=True)
     periods = (
@@ -570,13 +736,12 @@ def _export_tables(
     out_dir: str,
     prefix: str,
     fmt: str,
-    export_colname: str,
 ) -> None:
     base = f"{prefix}"
     out: Dict[str, pd.DataFrame] = {}
     for k, df in tables.items():
         out[k] = df
-    save_tables(out, out_dir, base, fmt, export_colname)
+    save_tables(out, out_dir, base, fmt)
 
 
 def _run_bulk_mode(
@@ -588,17 +753,42 @@ def _run_bulk_mode(
         sys.exit(2)
     periods = _periods_from_cfg(cfg)
     base = f"{prefix}_vip_quarterly"
-    kinds = _kinds_for_mode("quarterly")
-    if cfg.get("skip_existing") and _already_downloaded(
-        outdir, base, fmt, periods, kinds
-    ):
-        print("已存在所需数据，跳过下载")
-        return
-    tables = fetch_income_bulk(
-        pro,
-        periods=periods,
-        mode="quarterly",
-        fields=fields,
-        report_types=cfg.get("report_types"),
+    report_types = cfg.get("report_types") or [1]
+    recent_quarters = cfg.get("recent_quarters", 8) or 0
+    existing_raw = _load_existing_raw(outdir, base, fmt)
+    planned_pairs, missing_pairs, missing_detail = _plan_period_report_pairs(
+        existing_raw, periods, report_types, recent_quarters
     )
-    save_tables(tables, outdir, base, fmt, cfg.get("export_colname", "ticker"))
+    if not planned_pairs and existing_raw.empty:
+        eprint("错误：无下载计划且缺少历史数据，请调整参数后重试")
+        sys.exit(2)
+    refresh_pairs = planned_pairs - missing_pairs
+    fetch_pairs = (
+        missing_pairs if cfg.get("skip_existing") else planned_pairs
+    )
+    if fetch_pairs:
+        period_list = sorted({per for per, _ in fetch_pairs})
+        print(
+            f"缺口组合 {len(missing_pairs)} 个，滚动刷新 {len(refresh_pairs)} 个；"
+            f"本次实际抓取 {len(fetch_pairs)} 个 period×report_type 组合"
+        )
+        tables = fetch_income_bulk(
+            pro,
+            periods=period_list,
+            mode="quarterly",
+            fields=fields,
+            report_types=report_types,
+            period_report_pairs=fetch_pairs,
+            missing_detail=missing_detail,
+            refresh_pairs=refresh_pairs,
+            initial_load=existing_raw.empty,
+        )
+        new_raw = tables.get("raw", pd.DataFrame())
+    else:
+        print("未发现缺口，且已跳过滚动刷新，本次不调用远程接口")
+        new_raw = pd.DataFrame()
+    merged_raw = _merge_raw_tables(existing_raw, new_raw)
+    if merged_raw.empty:
+        eprint("警告：合并后数据为空，未写出文件")
+        return
+    save_tables({"raw": merged_raw}, outdir, base, fmt)

@@ -17,6 +17,11 @@ def parse_cli() -> argparse.Namespace:
     p.add_argument("--config", type=str, default=None)
     p.add_argument("--years", type=int)
     p.add_argument("--quarters", type=int)
+    p.add_argument(
+        "--recent-quarters",
+        type=int,
+        help="近N季滚动刷新（默认 8）",
+    )
     vip_group = p.add_mutually_exclusive_group()
     vip_group.add_argument(
         "--vip", action="store_true", help="高级：显式启用 VIP（默认启用）"
@@ -34,12 +39,11 @@ def parse_cli() -> argparse.Namespace:
         help="逗号分隔的 report_type 列表（默认 1）",
     )
     p.add_argument(
-        "--export-colname",
-        choices=["ticker", "ts_code"],
-        default="ticker",
-        help="导出列名：ticker 或 ts_code",
+        "--skip-existing",
+        action="store_true",
+        default=None,
+        help="仅补缺，不执行滚动刷新",
     )
-    p.add_argument("--skip-existing", action="store_true", default=None)
     p.add_argument("--force", action="store_true")
     p.add_argument("--token", type=str)
 
@@ -52,12 +56,6 @@ def parse_cli() -> argparse.Namespace:
         "--dataset-root", type=str, default="out", help="数据集根目录（默认 out）"
     )
     sp_exp.add_argument("--years", type=int, default=10, help="近几年（默认 10）")
-    sp_exp.add_argument(
-        "--export-colname",
-        choices=["ticker", "ts_code"],
-        default="ticker",
-        help="导出列名：ticker 或 ts_code",
-    )
     sp_exp.add_argument(
         "--kinds",
         type=str,
@@ -85,11 +83,17 @@ def parse_cli() -> argparse.Namespace:
         default="ticker",
         help="输出维度：ticker/ts_code 或 period",
     )
+    sp_cov.add_argument("--csv", type=str, help="缺口清单另存为 CSV")
 
     sp_dl = sub.add_parser("download", help="下载数据（默认增量补全；--force 覆盖）")
     sp_dl.add_argument("--config", type=str, default=None)
     sp_dl.add_argument("--years", "--year", dest="years", type=int)
     sp_dl.add_argument("--quarters", type=int)
+    sp_dl.add_argument(
+        "--recent-quarters",
+        type=int,
+        help="近N季滚动刷新（默认 8）",
+    )
     sp_dl.add_argument(
         "--since", type=str, help="起始日期 YYYY-MM-DD（优先于 --years/--quarters）"
     )
@@ -99,15 +103,14 @@ def parse_cli() -> argparse.Namespace:
     sp_dl.add_argument("--prefix", type=str)
     sp_dl.add_argument("--format", choices=["csv", "parquet"])
     sp_dl.add_argument(
+        "--skip-existing",
+        action="store_true",
+        help="仅补缺，不执行滚动刷新",
+    )
+    sp_dl.add_argument(
         "--report-types",
         type=str,
         help="逗号分隔的 report_type 列表（默认 1）",
-    )
-    sp_dl.add_argument(
-        "--export-colname",
-        choices=["ticker", "ts_code"],
-        default="ticker",
-        help="导出列名：ticker 或 ts_code",
     )
     sp_dl.add_argument("--token", type=str)
     sp_dl.add_argument(
@@ -158,9 +161,9 @@ def main() -> None:
         "outdir": "out",
         "prefix": "income",
         "format": "parquet",
-        "skip_existing": True,
+        "skip_existing": False,
+        "recent_quarters": 8,
         "token": None,
-        "export_colname": "ticker",
         "report_types": [1],
     }
     cli_overrides = {
@@ -173,8 +176,8 @@ def main() -> None:
         "prefix": args.prefix,
         "format": args.format,
         "skip_existing": args.skip_existing,
+        "recent_quarters": getattr(args, "recent_quarters", None),
         "token": args.token,
-        "export_colname": args.export_colname,
         "report_types": getattr(args, "report_types", None),
     }
     cfg = merge_config(cli_overrides, cfg_file, defaults)

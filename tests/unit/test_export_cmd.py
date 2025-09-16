@@ -20,7 +20,7 @@ def test_cmd_export_generates_single_and_cumulative(monkeypatch):
     monkeypatch.setattr(expmod, "_load_dataset", lambda root, name: cum)
     saved = {}
 
-    def fake_export_tables(built, out_dir, prefix, out_fmt, colname):
+    def fake_export_tables(built, out_dir, prefix, out_fmt):
         saved.update(built)
 
     monkeypatch.setattr(expmod, "_export_tables", fake_export_tables)
@@ -31,7 +31,6 @@ def test_cmd_export_generates_single_and_cumulative(monkeypatch):
         out_format="csv",
         out_dir="out",
         prefix="income",
-        export_colname="ticker",
         annual_strategy="cumulative",
     )
 
@@ -63,7 +62,7 @@ def test_cmd_export_years_filter(monkeypatch):
     monkeypatch.setattr(expmod, "_load_dataset", lambda root, name: cum)
     saved = {}
 
-    def fake_export_tables(built, out_dir, prefix, out_fmt, colname):
+    def fake_export_tables(built, out_dir, prefix, out_fmt):
         saved.update(built)
 
     monkeypatch.setattr(expmod, "_export_tables", fake_export_tables)
@@ -74,7 +73,6 @@ def test_cmd_export_years_filter(monkeypatch):
         out_format="csv",
         out_dir="out",
         prefix="income",
-        export_colname="ticker",
         annual_strategy="cumulative",
         years=1,
     )
