@@ -134,6 +134,52 @@ def parse_cli() -> argparse.Namespace:
         action="store_true",
         help="允许请求尚未披露的未来季度",
     )
+    sp_dl.add_argument(
+        "--no-export",
+        action="store_true",
+        dest="no_export",
+        help="仅写 raw/parquet 数仓，不导出派生 CSV",
+    )
+    sp_dl.add_argument(
+        "--export", action="store_true", dest="export_enabled"
+    )
+    sp_dl.set_defaults(export_enabled=None)
+    sp_dl.add_argument(
+        "--export-out-dir",
+        dest="export_out_dir",
+        type=str,
+        help="导出目录（默认与 outdir 下格式目录一致）",
+    )
+    sp_dl.add_argument(
+        "--export-format",
+        dest="export_out_format",
+        choices=["csv", "parquet"],
+        help="导出格式（默认 csv）",
+    )
+    sp_dl.add_argument(
+        "--export-kinds",
+        dest="export_kinds",
+        type=str,
+        help="导出口径（默认 annual,single,cumulative）",
+    )
+    sp_dl.add_argument(
+        "--export-annual-strategy",
+        dest="export_annual_strategy",
+        choices=["cumulative", "sum4"],
+        help="年度导出策略（默认 cumulative）",
+    )
+    sp_dl.add_argument(
+        "--export-years",
+        dest="export_years",
+        type=int,
+        help="导出最近 N 年（默认沿用下载窗口，未指定则导出全部）",
+    )
+    sp_dl.add_argument(
+        "--strict-export",
+        dest="export_strict",
+        action="store_true",
+        help="导出失败时视为错误退出（默认仅警告）",
+    )
     return p.parse_args()
 
 

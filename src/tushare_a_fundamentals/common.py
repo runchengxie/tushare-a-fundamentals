@@ -285,7 +285,7 @@ def _has_enough_credits(pro, required: int = 5000) -> bool:
     total = _available_credits(pro)
     if total is None:
         return False
-    return total >= required
+    return float(total) + 1e-6 >= float(required)
 
 
 def _concat_non_empty(dfs: List[pd.DataFrame]) -> pd.DataFrame:
@@ -697,17 +697,43 @@ def _load_dataset(root: str, dataset: str) -> pd.DataFrame:
     return ensure_ts_code(combined, context=f"dataset={dataset}")
 
 
-def build_datasets_from_raw(outdir: str, prefix: str) -> None:
-    """Build inventory and fact datasets from raw parquet file."""
-    raw_path = os.path.join(outdir, "parquet", f"{prefix}_vip_quarterly_raw.parquet")
-    if not os.path.exists(raw_path):
-        eprint(f"警告：未找到 {raw_path}，跳过数仓构建")
-        return
-    try:
-        raw = pd.read_parquet(raw_path)
-    except Exception as exc:
-        eprint(f"警告：读取 {raw_path} 失败：{exc}")
-        return
+def _load_raw_snapshot(
+    outdir: str, prefix: str, raw_format: str = "parquet"
+) -> tuple[pd.DataFrame | None, str | None]:
+    fmt_preferences: List[str] = []
+    if raw_format:
+        fmt_preferences.append(raw_format)
+    for candidate in ("parquet", "csv"):
+        if candidate not in fmt_preferences:
+            fmt_preferences.append(candidate)
+    for fmt in fmt_preferences:
+        fmt_dir = "csv" if fmt == "csv" else "parquet"
+        candidate = os.path.join(outdir, fmt_dir, f"{prefix}_vip_quarterly_raw.{fmt}")
+        if not os.path.exists(candidate):
+            continue
+        try:
+            if fmt == "csv":
+                return pd.read_csv(candidate), candidate
+            return pd.read_parquet(candidate), candidate
+        except Exception as exc:
+            eprint(f"警告：读取 {candidate} 失败：{exc}")
+    return None, None
+
+
+def build_datasets_from_raw(outdir: str, prefix: str, raw_format: str = "parquet") -> bool:
+    """Build inventory and fact datasets from the cached raw table.
+
+    Returns ``True`` when datasets are successfully materialised; ``False`` when
+    the raw snapshot is missing or unreadable.
+    """
+
+    raw, raw_path = _load_raw_snapshot(outdir, prefix, raw_format)
+    if raw is None:
+        eprint(f"警告：未找到 {prefix} 的 raw 数据文件，跳过数仓构建")
+        return False
+    if raw.empty:
+        eprint(f"警告：原始数据为空，跳过数仓构建：{raw_path}")
+        return False
     raw = ensure_ts_code(raw, context=raw_path)
     inv_dir = os.path.join(outdir, "dataset=inventory_income")
     os.makedirs(inv_dir, exist_ok=True)
@@ -729,6 +755,7 @@ def build_datasets_from_raw(outdir: str, prefix: str) -> None:
         dfy.drop(columns=["year"]).to_parquet(
             os.path.join(year_dir, "part.parquet"), index=False
         )
+    return True
 
 
 def _export_tables(
@@ -748,8 +775,12 @@ def _run_bulk_mode(
     pro, cfg: dict, fields: str, fmt: str, outdir: str, prefix: str
 ) -> None:
     if not _has_enough_credits(pro):
-        total = _available_credits(pro) or 0
-        eprint(f"错误：全市场批量需要至少 5000 积分。（检测到总积分：{int(total)}）")
+        total = _available_credits(pro)
+        detected = "0" if total is None else repr(total)
+        eprint(
+            "错误：全市场批量需要至少 5000 积分。"
+            f"（检测到总积分：{detected}）"
+        )
         sys.exit(2)
     periods = _periods_from_cfg(cfg)
     base = f"{prefix}_vip_quarterly"
