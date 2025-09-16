@@ -28,13 +28,13 @@
 
 ## 运行原理/快速运行指南
 
-1. 缓存/构建/将数据生成CSV文件，通过指令：`funda download`
+1. 缓存原始表、构建 parquet 数仓，并同步导出 CSV：`funda download`
 
 ## 可选附加功能
 
 2. 检查缓存数据是否完整：`funda coverage`
 
-3. 在已经有缓存数据的情况下，直接生成CSV文件：`funda export`
+3. 在已经有缓存数据的情况下，重新导出 CSV 或改写格式：`funda export`
 
 > ### 备注：
 > 
@@ -114,6 +114,14 @@ funda download --since 2010-01-01 --until 2019-12-31
 
 * 默认会依据披露截止日裁掉未来季度，如需强制包含可加 `--allow-future`；
 
+* `--no-export` / `--export`：关闭或显式开启派生数据导出（默认开启，失败时仅警告）；
+
+* `--export-format` / `--export-out-dir`：调整导出格式（默认 csv）与输出目录；
+
+* `--export-kinds` / `--export-years` / `--export-annual-strategy`：微调年度/单季/季度累计导出口径与年份窗口；
+
+* `--strict-export`：导出失败时返回非零状态码（默认仅记录警告并继续）。
+
 全量下载（建议）：
 
 * 通过日期范围或年数覆盖全量历史。例如：
@@ -126,7 +134,7 @@ funda download --since 2010-01-01 --until 2019-12-31
     funda download --years 30
     ```
 
-说明：下载口径固定为“按季度期末日的累计（YTD）值”，默认还会生成 `dataset=inventory_income` 与 `dataset=fact_income_cum` 两套数仓数据；仅需原始去重表时可追加 `--raw-only`。
+说明：下载口径固定为“按季度期末日的累计（YTD）值”，默认会生成 `dataset=inventory_income` 与 `dataset=fact_income_cum` 两套 parquet 数仓，并自动导出年度/季度累计/单季 CSV；仅需原始去重表时可追加 `--raw-only` 或 `--no-export`。
 
 #### 数据完整性检测/可视化覆盖情况
 
@@ -155,12 +163,12 @@ funda coverage --by ticker
 随后可用 `export` 构建 annual / single / cumulative 导出：
 
 ```bash
-funda export --kinds annual,single \\
+funda export --kinds annual,single,cumulative \\
   --annual-strategy cumulative \\
   --out-format csv --out-dir out/csv
 ```
 
-同样默认读取 `out` 目录下的数据集，并导出最近 10 年，可通过 `--dataset-root` 或 `--years` 参数微调。
+同样默认读取 `out` 目录下的数据集，并导出最近 10 年（若在 `download` 阶段未指定 `--export-years` 则默认沿用下载窗口）。可通过 `--dataset-root`、`--years` 或 `--out-format` 参数微调。
 导出的结果统一使用 `ts_code` 作为证券主键，并按 `ts_code`、`end_date` 排序。
 
 ## 开发约定

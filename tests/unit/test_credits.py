@@ -27,3 +27,8 @@ def test_has_enough_credits_false():
 def test_has_enough_credits_commas():
     pro = DummyPro(pd.DataFrame({"到期积分": ["3,000", "2,500"]}))
     assert _has_enough_credits(pro)
+
+
+def test_has_enough_credits_boundary():
+    pro = DummyPro(pd.DataFrame({"到期积分": [4999.999, 0.0]}))
+    assert _has_enough_credits(pro)

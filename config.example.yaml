@@ -11,5 +11,13 @@ report_types: "1"
 # Set skip_existing to true to disable rolling refresh (only fetch missing combos).
 skip_existing: false
 recent_quarters: 8
+# Derived export controls (download -> parquet snapshot -> CSV export)
+export_enabled: true
+export_out_format: "csv"
+export_out_dir: null  # default to <outdir>/<format>
+export_kinds: "annual,single,cumulative"
+export_annual_strategy: "cumulative"
+# export_years: 10
+# export_strict: false
 # allow_future: false  # 设为 true 可拉取尚未披露的未来季度
 # token: "your_tushare_token"
