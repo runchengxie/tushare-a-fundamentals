@@ -28,11 +28,13 @@
 
 ## 运行原理/快速运行指南
 
-1. 下载并构建所需数据，通过指令：`funda download`
+1. 缓存/构建/将数据生成CSV文件，通过指令：`funda download`
 
-2. （可选但建议）检查下载数据是否完整：`funda coverage`
+## 可选附加功能
 
-3. 数据导出：`funda export`
+2. 检查缓存数据是否完整：`funda coverage`
+
+3. 在已经有缓存数据的情况下，直接生成CSV文件：`funda export`
 
 > ### 备注：
 > 
