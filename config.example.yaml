@@ -46,7 +46,9 @@ export_out_format: "csv"
 export_out_dir: null  # default to <outdir>/<format>
 export_kinds: "annual,single,cumulative"
 export_annual_strategy: "cumulative"
-# export_years: 10  # By default, inherits the value from 'years'; even if set to a larger value, it will only export the quarters that currently exist in the cache.
+# export_years - By default, inherits the value from 'years'; even if set to a larger value, it will only export the quarters that currently exist in the cache.
+# export_years: 10
+# export_strict - When set to true, an error during the export phase will throw an exception and terminate the task; the default (false) only shows a warning and keeps the already built Parquet files.
 # export_strict: false
 # allow_future: false  # Set to true to allow fetching future quarters that have not yet been disclosed
 # Fallback for manually setting up the Tushare API token when environment variables cannot be used (not recommended; use only when no other options exist).
