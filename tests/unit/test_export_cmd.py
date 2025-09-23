@@ -81,3 +81,36 @@ def test_cmd_export_years_filter(monkeypatch):
 
     cum_df = saved["cumulative"]
     assert set(cum_df["end_date"].astype(str)) == set(periods[-4:])
+
+
+def test_cmd_export_warns_when_years_exceed_cache(monkeypatch, capsys):
+    periods = [
+        "20220331",
+        "20220630",
+        "20220930",
+    ]
+    cum = pd.DataFrame(
+        {
+            "ts_code": ["000001.SZ"] * len(periods),
+            "end_date": periods,
+            "total_revenue": [10.0, 20.0, 30.0],
+        }
+    )
+
+    monkeypatch.setattr(expmod, "_load_dataset", lambda root, name: cum)
+    monkeypatch.setattr(expmod, "_export_tables", lambda built, out_dir, prefix, out_fmt: None)
+
+    args = argparse.Namespace(
+        dataset_root="root",
+        kinds="cumulative",
+        out_format="csv",
+        out_dir="out",
+        prefix="income",
+        annual_strategy="cumulative",
+        years=5,
+    )
+
+    expmod.cmd_export(args)
+
+    captured = capsys.readouterr()
+    assert "提示：导出窗口" in captured.err
