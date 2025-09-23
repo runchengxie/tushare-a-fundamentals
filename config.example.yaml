@@ -32,7 +32,7 @@ export_out_format: "csv"
 export_out_dir: null  # default to <outdir>/<format>
 export_kinds: "annual,single,cumulative"
 export_annual_strategy: "cumulative"
-# export_years: 10
+# export_years: 10  # 默认继承 years；设为更大值时仍只会导出缓存内现有季度
 # export_strict: false
 # allow_future: false  # 设为 true 可拉取尚未披露的未来季度
 # token: "your_tushare_token"

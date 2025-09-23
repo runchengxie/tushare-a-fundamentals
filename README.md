@@ -196,7 +196,7 @@ funda export --kinds annual,single,cumulative \\
   --out-format csv --out-dir out/csv
 ```
 
-同样默认读取 `out` 目录下的数据集，并导出最近 10 年（若在 `download` 阶段未指定 `--export-years` 则默认沿用下载窗口）。可通过 `--dataset-root`、`--years` 或 `--out-format` 参数微调。
+同样默认读取 `out` 目录下的数据集，并导出最近 10 年（若在 `download` 阶段未指定 `--export-years` 则默认沿用下载窗口）。若手动指定的窗口大于缓存中已有的季度范围，CLI 会提示并仅导出当前目录下已构建的数据。可通过 `--dataset-root`、`--years` 或 `--out-format` 参数微调。
 导出的结果统一使用 `ts_code` 作为证券主键，并按 `ts_code`、`end_date` 排序。
 
 ## 开发约定

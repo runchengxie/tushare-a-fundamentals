@@ -26,8 +26,26 @@ def cmd_export(args: argparse.Namespace) -> None:
     if "is_latest" in cum.columns:
         cum = cum[cum["is_latest"] == 1]
     periods = sorted(cum["end_date"].astype(str).unique())
+    total_periods = len(periods)
     if years is not None:
-        keep = set(periods[-years * 4 :])
+        requested_periods = years * 4
+        if requested_periods > 0:
+            if total_periods == 0:
+                eprint(
+                    f"提示：导出窗口 {years} 年超出现有缓存范围，当前目录 {root} 下没有可导出的季度数据。"
+                )
+            elif requested_periods > total_periods:
+                eprint(
+                    "提示：导出窗口 {years} 年超出现有缓存范围（仅有 {count} 个季度，"
+                    "{earliest} 至 {latest}），将导出全部可用数据。".format(
+                        years=years,
+                        count=total_periods,
+                        earliest=periods[0],
+                        latest=periods[-1],
+                    )
+                )
+        keep_slice = periods[-requested_periods:] if requested_periods else periods
+        keep = set(keep_slice)
         cum = cum[cum["end_date"].astype(str).isin(keep)]
 
     built: Dict[str, pd.DataFrame] = {}
