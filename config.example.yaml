@@ -24,7 +24,7 @@ skip_existing: false
 # recent_quarters controls the rolling refresh window: re-fetches the most recent N quarters to pick up revisions.
 # Set recent_quarters to 0 to disable this behavior; skip_existing: true skips the refresh entirely (only fetch missing combos).
 recent_quarters: 8
-# 启用多数据集批量下载（示例）
+# Enable multi-dataset batch download (Example)
 # datasets:
 #   - name: income
 #     report_types: [1]
@@ -34,9 +34,10 @@ recent_quarters: 8
 #   - express
 #   - dividend
 #   - name: fina_mainbz
-#     type: ["P", "D"]
+#     type: ["P", "D", "I"]
 # data_dir: "data"
-# use_vip: true
+# Only the VIP version of Tushare token supports batch download
+# use_vip: true       
 # max_per_minute: 90
 # state_path: null
 # Derived export controls (download -> parquet snapshot -> CSV export)
@@ -45,7 +46,8 @@ export_out_format: "csv"
 export_out_dir: null  # default to <outdir>/<format>
 export_kinds: "annual,single,cumulative"
 export_annual_strategy: "cumulative"
-# export_years: 10  # 默认继承 years；设为更大值时仍只会导出缓存内现有季度
+# export_years: 10  # By default, inherits the value from 'years'; even if set to a larger value, it will only export the quarters that currently exist in the cache.
 # export_strict: false
-# allow_future: false  # 设为 true 可拉取尚未披露的未来季度
+# allow_future: false  # Set to true to allow fetching future quarters that have not yet been disclosed
+# Fallback for manually setting up the Tushare API token when environment variables cannot be used (not recommended; use only when no other options exist).
 # token: "your_tushare_token"
