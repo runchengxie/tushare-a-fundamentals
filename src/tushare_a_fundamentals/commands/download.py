@@ -14,6 +14,11 @@ from ..common import (
     merge_config,
     parse_report_types,
 )
+from ..downloader import (
+    MarketDatasetDownloader,
+    parse_dataset_requests,
+    parse_yyyymmdd,
+)
 from .export import cmd_export
 
 
@@ -32,6 +37,11 @@ def _download_defaults() -> dict:
         "report_types": [1],
         "allow_future": False,
         "recent_quarters": 8,
+        "datasets": None,
+        "data_dir": "data",
+        "use_vip": True,
+        "max_per_minute": 90,
+        "state_path": None,
         "export_enabled": True,
         "export_out_dir": None,
         "export_out_format": "csv",
@@ -56,6 +66,11 @@ def _collect_cli_overrides(args: argparse.Namespace) -> dict:
         "report_types": getattr(args, "report_types", None),
         "allow_future": getattr(args, "allow_future", None),
         "recent_quarters": getattr(args, "recent_quarters", None),
+        "datasets": getattr(args, "datasets", None),
+        "data_dir": getattr(args, "data_dir", None),
+        "use_vip": getattr(args, "use_vip", None),
+        "max_per_minute": getattr(args, "max_per_minute", None),
+        "state_path": getattr(args, "state_path", None),
         "export_out_dir": getattr(args, "export_out_dir", None),
         "export_out_format": getattr(args, "export_out_format", None),
         "export_kinds": getattr(args, "export_kinds", None),
@@ -82,7 +97,9 @@ def _build_export_args(cfg: dict, outdir: str, prefix: str) -> Namespace | None:
     if not cfg.get("export_enabled", True):
         return None
     export_out_format = (cfg.get("export_out_format") or "csv").lower()
-    export_out_dir = cfg.get("export_out_dir") or os.path.join(outdir, export_out_format)
+    export_out_dir = cfg.get("export_out_dir") or os.path.join(
+        outdir, export_out_format
+    )
     export_kinds_cfg = cfg.get("export_kinds")
     if isinstance(export_kinds_cfg, (list, tuple, set)):
         export_kinds = ",".join(
@@ -125,6 +142,35 @@ def cmd_download(args: argparse.Namespace) -> None:
     cli_overrides = _collect_cli_overrides(args)
     cfg = merge_config(cli_overrides, cfg_file, defaults)
     cfg["report_types"] = parse_report_types(cfg.get("report_types"))
+    dataset_requests = parse_dataset_requests(cfg.get("datasets"))
+    if dataset_requests:
+        if getattr(args, "force", False):
+            eprint("警告：多数据集模式暂不支持 --force，将忽略该参数")
+        if getattr(args, "raw_only", False) or getattr(args, "build_only", False):
+            eprint("错误：多数据集模式不支持 --raw-only 或 --build-only")
+            sys.exit(2)
+        pro = init_pro_api(cfg.get("token"))
+        data_dir = cfg.get("data_dir") or "data"
+        use_vip = cfg.get("use_vip")
+        if use_vip is None:
+            use_vip = True
+        max_per_minute = cfg.get("max_per_minute")
+        if max_per_minute is None:
+            max_per_minute = 90
+        downloader = MarketDatasetDownloader(
+            pro,
+            data_dir,
+            use_vip=use_vip,
+            max_per_minute=max_per_minute,
+            state_path=cfg.get("state_path"),
+        )
+        downloader.run(
+            dataset_requests,
+            start=parse_yyyymmdd(cfg.get("since")),
+            end=parse_yyyymmdd(cfg.get("until")),
+            refresh_periods=int(cfg.get("recent_quarters") or 0),
+        )
+        return
     raw_only = getattr(args, "raw_only", False)
     build_only = getattr(args, "build_only", False)
     if raw_only and build_only:

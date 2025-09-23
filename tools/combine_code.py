@@ -39,7 +39,7 @@ EXCLUDE_DIRS_ANYWHERE: Set[str] = {
 # This allows keeping nested directories with the same name (e.g., 'src/app/data').
 EXCLUDE_DIRS_ROOT_ONLY: Set[str] = {
     "data",  # User-specific data, not source code
-    "tests",  # Test directories
+    "tests",
 }
 
 # Directory name patterns to exclude (e.g., any directory ending with .egg-info).
@@ -84,6 +84,7 @@ EXCLUDE_FILES: Set[str] = {
     "Thumbs.db",
     "celerybeat-schedule",
     ".env",
+    "uv.lock",
 }
 
 

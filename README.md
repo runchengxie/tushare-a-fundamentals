@@ -4,31 +4,59 @@
 
 ## 批量下载功能开发进度
 
-* [x] 利润表（正在开发）
+> 现已提供统一调度器，可按期优先使用 TuShare VIP 接口抓取以下数据集，非 VIP 接口则按月窗口滚动补齐。
 
-* [ ] 资产负债表
-
-* [ ] 现金流量表
-
-* [ ] 业绩预告
-
-* [ ] 业绩快报
-
-* [ ] 分红送股
-
-* [ ] 财务指标数据
-
-* [ ] 财务审计意见
-
-* [ ] 主营业务构成
-
-* [ ] 财报披露计划
+* [x] 利润表
+* [x] 资产负债表
+* [x] 现金流量表
+* [x] 业绩预告
+* [x] 业绩快报
+* [x] 分红送股
+* [x] 财务指标数据
+* [x] 财务审计意见
+* [x] 主营业务构成（默认抓取 type=P/D）
+* [x] 财报披露计划
 
 提示：所有命令行输出与错误信息均为中文；代码实现为英文。
 
 ## 运行原理/快速运行指南
 
 1. 缓存原始表、构建 parquet 数仓，并同步导出 CSV：`funda download`
+
+### 多数据集批量下载（VIP 优先）
+
+`funda download` 现在支持直接针对多个数据集批量抓取：
+
+```bash
+funda download --datasets income balancesheet cashflow forecast express \
+  dividend fina_indicator fina_audit fina_mainbz disclosure_date \
+  --use-vip --data-dir data --since 2010-01-01
+```
+
+要长期保存增量游标，可在配置文件中启用：
+
+```yaml
+datasets:
+  - name: income
+    report_types: [1]
+  - balancesheet
+  - cashflow
+  - forecast
+  - express
+  - dividend
+  - fina_indicator
+  - fina_audit
+  - name: fina_mainbz
+    type: ["P", "D"]
+ - disclosure_date
+data_dir: data
+use_vip: true
+max_per_minute: 80
+recent_quarters: 8  # 按季度回刷窗口
+```
+
+运行后输出位于 `data/<dataset>/year=YYYY/part-*.parquet`，增量状态写入 `data/_state/state.json`，默认滚动补齐最近 `recent_quarters` 个季度并继续增量下载。
+注意：`--raw-only`、`--build-only`、`--force` 仅适用于旧版利润表流程，若在多数据集模式中使用会被忽略或报错。
 
 ## 可选附加功能
 

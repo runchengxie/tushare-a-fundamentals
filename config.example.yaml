@@ -11,6 +11,21 @@ report_types: "1"
 # Set skip_existing to true to disable rolling refresh (only fetch missing combos).
 skip_existing: false
 recent_quarters: 8
+# 启用多数据集批量下载（示例）
+# datasets:
+#   - name: income
+#     report_types: [1]
+#   - balancesheet
+#   - cashflow
+#   - forecast
+#   - express
+#   - dividend
+#   - name: fina_mainbz
+#     type: ["P", "D"]
+# data_dir: "data"
+# use_vip: true
+# max_per_minute: 90
+# state_path: null
 # Derived export controls (download -> parquet snapshot -> CSV export)
 export_enabled: true
 export_out_format: "csv"

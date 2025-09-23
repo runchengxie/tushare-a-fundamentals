@@ -103,6 +103,17 @@ def parse_cli() -> argparse.Namespace:
     sp_dl.add_argument("--prefix", type=str)
     sp_dl.add_argument("--format", choices=["csv", "parquet"])
     sp_dl.add_argument(
+        "--datasets",
+        nargs="+",
+        help="启用多数据集批量下载（传入数据集名称列表）",
+    )
+    sp_dl.add_argument(
+        "--data-dir",
+        dest="data_dir",
+        type=str,
+        help="多数据集输出目录（默认 data）",
+    )
+    sp_dl.add_argument(
         "--skip-existing",
         action="store_true",
         help="仅补缺，不执行滚动刷新",
@@ -118,6 +129,32 @@ def parse_cli() -> argparse.Namespace:
         action="store_true",
         help="强制重新下载并覆盖已有文件（忽略增量跳过）",
     )
+    sp_dl.add_argument(
+        "--max-per-minute",
+        dest="max_per_minute",
+        type=int,
+        help="接口每分钟最大调用次数（默认 90）",
+    )
+    vip_toggle = sp_dl.add_mutually_exclusive_group()
+    vip_toggle.add_argument(
+        "--use-vip",
+        dest="use_vip",
+        action="store_true",
+        help="优先使用 VIP 接口",
+    )
+    vip_toggle.add_argument(
+        "--no-vip",
+        dest="use_vip",
+        action="store_false",
+        help="禁用 VIP 接口",
+    )
+    sp_dl.add_argument(
+        "--state-path",
+        dest="state_path",
+        type=str,
+        help="覆盖默认增量状态文件位置",
+    )
+    sp_dl.set_defaults(use_vip=None)
     flag_group = sp_dl.add_mutually_exclusive_group()
     flag_group.add_argument(
         "--raw-only",
