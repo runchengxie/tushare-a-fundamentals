@@ -5,7 +5,19 @@ fields: "ts_code,ann_date,f_ann_date,end_date,report_type,comp_type,update_flag,
 outdir: "out"
 prefix: "income"
 format: "parquet"
-# By default, only consolidated reports (report_type=1) are downloaded. A comma-separated list can be provided.
+# By default, only consolidated reports (report_type=1) are downloaded.
+# 1. Consolidated Statements: The latest consolidated financial statements of the listed company (this is the default type).
+# 2. Quarterly Consolidated Statements: Consolidated financial statements for a single quarter.
+# 3. Adjusted Quarterly Consolidated Statements: Adjusted consolidated financial statements for a single quarter (if available).
+# 4. Adjusted Consolidated Statements (Prior Period Comparative): Prior-year comparative data as published in the current year's financial statements; the reporting period is for the previous year.
+# 5. Pre-adjustment Consolidated Statements: The original data that was retained before a change or restatement was made.
+# 6. Parent Company Statements: The financial statements of the parent company on a standalone basis (unconsolidated).
+# 7. Parent Company Quarterly Statements: The quarterly financial statements of the parent company.
+# 8. Adjusted Parent Company Quarterly Statements: The adjusted quarterly financial statements of the parent company.
+# 9. Adjusted Parent Company Statements (Prior Period Comparative): The parent company's prior-year comparative data as published in the current year's financial statements.
+# 10. Pre-adjustment Parent Company Statements: The original financial statement data of the parent company before any adjustments were made.
+# 11. Pre-adjustment Consolidated Statements: The original data of the consolidated financial statements before adjustments were made.
+# 12. Pre-adjustment Parent Company Statements: The original data of the parent company's statements, retained from before a change or restatement occurred.
 report_types: "1"
 # The 'download' subcommand defaults to patch missing periods plus a rolling refresh window.
 # Set skip_existing to true to disable rolling refresh (only fetch missing combos).
