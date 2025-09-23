@@ -20,8 +20,9 @@ format: "parquet"
 # 12. Pre-adjustment Parent Company Statements: The original data of the parent company's statements, retained from before a change or restatement occurred.
 report_types: "1"
 # The 'download' subcommand defaults to patch missing periods plus a rolling refresh window.
-# Set skip_existing to true to disable rolling refresh (only fetch missing combos).
 skip_existing: false
+# recent_quarters controls the rolling refresh window: re-fetches the most recent N quarters to pick up revisions.
+# Set recent_quarters to 0 to disable this behavior; skip_existing: true skips the refresh entirely (only fetch missing combos).
 recent_quarters: 8
 # 启用多数据集批量下载（示例）
 # datasets:
