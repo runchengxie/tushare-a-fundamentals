@@ -204,6 +204,28 @@ def periods_by_quarters(quarters: int) -> List[str]:
     return sorted(res)
 
 
+def _backfill_periods(anchor: str, count: int) -> List[str]:
+    """Return ``count`` quarterly periods ending at ``anchor`` (inclusive)."""
+
+    if count <= 0:
+        return []
+    order = PERIOD_NODES
+    if anchor[4:] not in order:
+        raise ValueError(f"unsupported anchor period: {anchor}")
+    year = int(anchor[:4])
+    idx = order.index(anchor[4:])
+    res: List[str] = []
+    cy = year
+    ci = idx
+    for _ in range(count):
+        res.append(f"{cy}{order[ci]}")
+        ci -= 1
+        if ci < 0:
+            ci = len(order) - 1
+            cy -= 1
+    return sorted(res)
+
+
 def last_publishable_period(today: date) -> str:
     """Return the last period expected to be publishable at ``today``."""
     y = today.year
@@ -677,14 +699,27 @@ def _periods_from_cfg(cfg: dict) -> List[str]:
     - 否则若提供 quarters，按季度数量回溯。
     - 否则按 years 与 mode 计算（years 默认为 10）。
     """
+    allow_future = bool(cfg.get("allow_future"))
+    limit = None
+    if not allow_future:
+        limit = last_publishable_period(date.today())
+
     if cfg.get("since"):
         periods = _periods_from_range("quarterly", cfg["since"], cfg.get("until"))
     elif cfg.get("quarters") and cfg["quarters"] > 0:
-        periods = periods_by_quarters(cfg["quarters"])
+        quarters = cfg["quarters"]
+        if allow_future:
+            periods = periods_by_quarters(quarters)
+        else:
+            periods = _backfill_periods(limit, quarters)
     else:
-        periods = periods_for_mode_by_years(cfg.get("years", 10), Mode.QUARTERLY)
-    if not cfg.get("allow_future"):
-        limit = last_publishable_period(date.today())
+        request_years = int(cfg.get("years", 10))
+        quarters = request_years * 4
+        if allow_future:
+            periods = periods_by_quarters(quarters)
+        else:
+            periods = _backfill_periods(limit, quarters)
+    if not allow_future:
         periods = [p for p in periods if p <= limit]
     return periods
 
