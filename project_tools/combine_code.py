@@ -40,7 +40,7 @@ EXCLUDE_DIRS_ANYWHERE: Set[str] = {
 EXCLUDE_DIRS_ROOT_ONLY: Set[str] = {
     "data",  # User-specific data, not source code
     "tests",
-    "tools",
+    "project_tools",
     "docs",
 }
 
