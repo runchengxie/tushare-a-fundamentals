@@ -16,7 +16,7 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from .common import last_publishable_period
+from .common import _concat_non_empty, last_publishable_period
 from .transforms.deduplicate import mark_latest
 DATE_FMT = "%Y%m%d"
 MAX_PAGES = 200
@@ -56,6 +56,7 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         default_year_column="end_date",
         report_types=(1,),
         fields=None,
+        vip_supports_pagination=True,
     ),
     "balancesheet": DatasetSpec(
         name="balancesheet",
@@ -67,6 +68,7 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         dedup_group_keys=("ts_code", "end_date"),
         default_year_column="end_date",
         fields=None,
+        vip_supports_pagination=True,
     ),
     "cashflow": DatasetSpec(
         name="cashflow",
@@ -78,6 +80,7 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         dedup_group_keys=("ts_code", "end_date"),
         default_year_column="end_date",
         fields=None,
+        vip_supports_pagination=True,
     ),
     "forecast": DatasetSpec(
         name="forecast",
@@ -89,6 +92,7 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         dedup_group_keys=("ts_code", "end_date", "type"),
         default_year_column="end_date",
         fields=None,
+        vip_supports_pagination=True,
     ),
     "express": DatasetSpec(
         name="express",
@@ -100,6 +104,7 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         dedup_group_keys=("ts_code", "end_date"),
         default_year_column="end_date",
         fields=None,
+        vip_supports_pagination=True,
     ),
     "dividend": DatasetSpec(
         name="dividend",
@@ -134,6 +139,7 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         dedup_group_keys=("ts_code", "end_date"),
         default_year_column="end_date",
         fields=None,
+        vip_supports_pagination=True,
     ),
     "fina_audit": DatasetSpec(
         name="fina_audit",
@@ -159,6 +165,7 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         type_param="type",
         type_values=("P", "D"),
         fields=None,
+        vip_supports_pagination=True,
     ),
     "disclosure_date": DatasetSpec(
         name="disclosure_date",
@@ -309,11 +316,10 @@ def write_parquet_dataset(
         partition_new = partition_new.reindex(columns=all_cols)
         if not existing.empty:
             existing = existing.reindex(columns=all_cols)
-        combined = (
-            pd.concat([existing, partition_new], ignore_index=True)
-            if not existing.empty
-            else partition_new
-        )
+        frames_to_concat = [partition_new]
+        if not existing.empty:
+            frames_to_concat.insert(0, existing)
+        combined = _concat_non_empty(frames_to_concat)
         if "retrieved_at" in combined.columns:
             combined["retrieved_at"] = pd.to_datetime(
                 combined["retrieved_at"], errors="coerce"
@@ -389,12 +395,23 @@ class PeriodCombination:
             params[spec.type_param] = self.type_value
         return params
 
+    def describe(self, spec: DatasetSpec) -> str:
+        parts: List[str] = []
+        if self.report_type is not None:
+            parts.append(f"report_type={self.report_type}")
+        if spec.type_param and self.type_value is not None:
+            parts.append(f"{spec.type_param}={self.type_value}")
+        if not parts:
+            return "默认组合"
+        return ", ".join(parts)
+
 
 @dataclass
 class PeriodFetchOutcome:
     frames: List[pd.DataFrame] = field(default_factory=list)
     last_successful_period: Optional[str] = None
     had_failure: bool = False
+    failed_periods: List[str] = field(default_factory=list)
 
 
 class JsonState:
@@ -513,6 +530,7 @@ class MarketDatasetDownloader:
         method_name, paginate = self._resolve_method(spec)
         collected: List[pd.DataFrame] = []
         pending_updates: List[Tuple[str, str, str]] = []
+        failure_notes: List[Tuple[str, List[str]]] = []
         period_end = self._bounded_period_end(end_date)
         for combo in combinations:
             state_key = combo.state_key("last_period", spec)
@@ -530,13 +548,12 @@ class MarketDatasetDownloader:
                 continue
             outcome = self._collect_periods(spec, periods, combo, method_name, paginate)
             collected.extend(outcome.frames)
-            if (
-                not outcome.had_failure
-                and outcome.last_successful_period is not None
-            ):
+            if outcome.last_successful_period is not None:
                 pending_updates.append(
                     (spec.name, state_key, outcome.last_successful_period)
                 )
+            if outcome.failed_periods:
+                failure_notes.append((combo.describe(spec), outcome.failed_periods))
         combined = self._concat_and_dedup(collected, spec)
         write_ok = True
         if combined is not None:
@@ -551,6 +568,12 @@ class MarketDatasetDownloader:
         if write_ok:
             for dataset, key, value in pending_updates:
                 self.state.update(dataset, key, value)
+            if failure_notes:
+                for desc, periods in failure_notes:
+                    failed = ", ".join(periods)
+                    print(
+                        f"提示：{spec.name} {desc} 未成功的 period: {failed}"
+                    )
 
     def _download_calendar(
         self,
@@ -569,11 +592,11 @@ class MarketDatasetDownloader:
             return
         collected: List[pd.DataFrame] = []
         last_completed: Optional[str] = None
-        had_failure = False
+        failed_windows: List[str] = []
         for win_start, win_end in windows:
             df = self._fetch_window(spec, win_start, win_end)
             if df is None:
-                had_failure = True
+                failed_windows.append(f"{win_start}-{win_end}")
                 continue
             if not df.empty:
                 collected.append(df)
@@ -589,8 +612,13 @@ class MarketDatasetDownloader:
                 year_col,
                 group_keys=spec.dedup_group_keys or spec.primary_keys,
             )
-        if write_ok and not had_failure and last_completed is not None:
+        if write_ok and last_completed is not None:
             self.state.update(spec.name, state_key, last_completed)
+            if failed_windows:
+                print(
+                    "提示："
+                    f"{spec.name} 部分窗口抓取失败：{', '.join(failed_windows)}"
+                )
 
     def _resolve_report_types(
         self, spec: DatasetSpec, options: Dict[str, Any]
@@ -668,6 +696,12 @@ class MarketDatasetDownloader:
             )
             if not success:
                 outcome.had_failure = True
+                outcome.failed_periods.append(period_value)
+                combo_desc = combo.describe(spec)
+                print(
+                    f"警告：{spec.name} {combo_desc} 在 {period_value} 抓取失败，"
+                    "请稍后手动排查"
+                )
                 continue
             outcome.last_successful_period = period_value
             if df is not None and not df.empty:
@@ -736,7 +770,6 @@ class MarketDatasetDownloader:
             func = fallback_call
         attempt = 0
         while attempt <= self.max_retries:
-            self.limiter.wait()
             try:
                 limit_val = params.get("limit", 10000) or 10000
                 try:
@@ -758,6 +791,7 @@ class MarketDatasetDownloader:
                         call_params.setdefault("limit", limit)
                     if fields:
                         call_params.setdefault("fields", fields)
+                    self.limiter.wait()
                     df = func(**call_params)
                     if df is None or df.empty:
                         break
@@ -769,7 +803,7 @@ class MarketDatasetDownloader:
                     use_pagination = True
                 if not rows:
                     return pd.DataFrame()
-                return pd.concat(rows, ignore_index=True)
+                return _concat_non_empty(rows)
             except Exception as exc:  # pragma: no cover - network failure
                 attempt += 1
                 if attempt > self.max_retries:
@@ -798,7 +832,7 @@ class MarketDatasetDownloader:
             if "retrieved_at" not in frame.columns:
                 frame["retrieved_at"] = timestamp
             prepared.append(frame)
-        combined = pd.concat(prepared, ignore_index=True)
+        combined = _concat_non_empty(prepared)
         for col in ("ts_code", "end_date", "ann_date"):
             if col in combined.columns:
                 combined[col] = combined[col].astype(str)
