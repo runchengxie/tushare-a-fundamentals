@@ -18,10 +18,11 @@ eggs/
 # Ruff stuff:
 .ruff_cache/
 
-# Coverage
+# Tests and coverage
 .coverage
 coverage.xml
 *.cover
+.pytest_cache/
 
 # IDE-related
 .vscode/
@@ -42,3 +43,4 @@ meta/state.db
 
 # Debugging purpose
 full_project_source.txt
+
