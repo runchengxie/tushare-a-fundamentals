@@ -56,8 +56,9 @@ def test_market_downloader_periodic(tmp_path, monkeypatch):
     pro = DummyPro()
     saved = []
 
-    def fake_write(df, root, dataset, year_col):
-        saved.append((root, dataset, year_col, df.copy()))
+    def fake_write(df, root, dataset, year_col, *, group_keys=None):
+        saved.append((root, dataset, year_col, group_keys, df.copy()))
+        return True
 
     monkeypatch.setattr(
         "tushare_a_fundamentals.downloader.write_parquet_dataset", fake_write
@@ -82,21 +83,23 @@ def test_market_downloader_periodic(tmp_path, monkeypatch):
         "20201231",
     ]
     assert saved
-    out_root, dataset, year_col, df = saved[0]
+    out_root, dataset, year_col, group_keys, df = saved[0]
     assert Path(out_root) == tmp_path
     assert dataset == "income"
     assert year_col == "end_date"
+    assert group_keys == ("ts_code", "end_date")
     assert len(df) == 4
     state = json.loads(Path(state_path).read_text("utf-8"))
-    assert state["income"]["last_period"] == "20201231"
+    assert state["income"]["last_period:rt=1"] == "20201231"
 
 
 def test_market_downloader_calendar(tmp_path, monkeypatch):
     pro = DummyPro()
     saved = []
 
-    def fake_write(df, root, dataset, year_col):
-        saved.append((dataset, df.copy()))
+    def fake_write(df, root, dataset, year_col, *, group_keys=None):
+        saved.append((dataset, group_keys, df.copy()))
+        return True
 
     monkeypatch.setattr(
         "tushare_a_fundamentals.downloader.write_parquet_dataset", fake_write
