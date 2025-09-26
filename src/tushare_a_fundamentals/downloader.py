@@ -3,17 +3,23 @@ from __future__ import annotations
 import calendar
 import json
 import os
+import shutil
 import time
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
+from tempfile import TemporaryDirectory
+
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from .common import last_publishable_period
+from .transforms.deduplicate import mark_latest
 DATE_FMT = "%Y%m%d"
+MAX_PAGES = 200
 
 
 @dataclass(frozen=True)
@@ -26,6 +32,7 @@ class DatasetSpec:
     date_start_param: str = "start_date"
     date_end_param: str = "end_date"
     primary_keys: Sequence[str] = field(default_factory=tuple)
+    dedup_group_keys: Sequence[str] = field(default_factory=tuple)
     default_year_column: str = "ann_date"
     default_start: str = "20000101"
     fields: Optional[str] = None
@@ -45,6 +52,7 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         period_field="period",
         date_field=None,
         primary_keys=("ts_code", "end_date", "report_type"),
+        dedup_group_keys=("ts_code", "end_date"),
         default_year_column="end_date",
         report_types=(1,),
         fields=None,
@@ -56,6 +64,7 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         period_field="period",
         date_field=None,
         primary_keys=("ts_code", "end_date", "report_type"),
+        dedup_group_keys=("ts_code", "end_date"),
         default_year_column="end_date",
         fields=None,
     ),
@@ -66,6 +75,7 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         period_field="period",
         date_field=None,
         primary_keys=("ts_code", "end_date", "report_type"),
+        dedup_group_keys=("ts_code", "end_date"),
         default_year_column="end_date",
         fields=None,
     ),
@@ -76,6 +86,7 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         period_field="period",
         date_field=None,
         primary_keys=("ts_code", "end_date", "type"),
+        dedup_group_keys=("ts_code", "end_date", "type"),
         default_year_column="end_date",
         fields=None,
     ),
@@ -86,6 +97,7 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         period_field="period",
         date_field=None,
         primary_keys=("ts_code", "end_date"),
+        dedup_group_keys=("ts_code", "end_date"),
         default_year_column="end_date",
         fields=None,
     ),
@@ -102,6 +114,13 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
             "ex_date",
             "imp_ann_date",
         ),
+        dedup_group_keys=(
+            "ts_code",
+            "ann_date",
+            "record_date",
+            "ex_date",
+            "imp_ann_date",
+        ),
         default_year_column="ann_date",
         fields=None,
     ),
@@ -112,6 +131,7 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         period_field="period",
         date_field=None,
         primary_keys=("ts_code", "end_date"),
+        dedup_group_keys=("ts_code", "end_date"),
         default_year_column="end_date",
         fields=None,
     ),
@@ -122,6 +142,7 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         period_field="period",
         date_field=None,
         primary_keys=("ts_code", "end_date"),
+        dedup_group_keys=("ts_code", "end_date"),
         default_year_column="end_date",
         fields=None,
         api_supports_pagination=True,
@@ -133,6 +154,7 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         period_field="period",
         date_field=None,
         primary_keys=("ts_code", "end_date", "bz_item", "type"),
+        dedup_group_keys=("ts_code", "end_date", "bz_item", "type"),
         default_year_column="end_date",
         type_param="type",
         type_values=("P", "D"),
@@ -147,6 +169,13 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         date_start_param="start_date",
         date_end_param="end_date",
         primary_keys=(
+            "ts_code",
+            "end_date",
+            "ann_date",
+            "pre_date",
+            "actual_date",
+        ),
+        dedup_group_keys=(
             "ts_code",
             "end_date",
             "ann_date",
@@ -242,23 +271,83 @@ def write_parquet_dataset(
     root: str,
     dataset: str,
     year_col: str,
-) -> None:
+    *,
+    group_keys: Sequence[str] | None = None,
+) -> bool:
     if df.empty:
-        return
+        return True
     frame = df.copy()
     frame.columns = [c.lower() for c in frame.columns]
     if year_col not in frame.columns:
         frame[year_col] = None
-    years = frame[year_col].astype(str).str[:4]
-    frame["year"] = years
-    target_root = Path(root) / dataset
-    ensure_dir(target_root.as_posix())
-    table = pa.Table.from_pandas(frame, preserve_index=False)
-    pq.write_to_dataset(
-        table,
-        root_path=target_root.as_posix(),
-        partition_cols=["year"],
+    frame[year_col] = frame[year_col].astype(str)
+    years = frame[year_col].str[:4]
+    frame["year"] = years.fillna("unknown").replace(
+        to_replace=r"(?i)nan|nat|none", value="unknown", regex=True
     )
+    dataset_root = Path(root) / dataset
+    ensure_dir(dataset_root.as_posix())
+    updated_any = False
+    for year in sorted({y for y in frame["year"].dropna()}):
+        partition_new = frame[frame["year"] == year].copy()
+        if partition_new.empty:
+            continue
+        target_dir = dataset_root / f"year={year}"
+        existing = pd.DataFrame()
+        if target_dir.exists():
+            try:
+                tables = [pq.read_table(p.as_posix()) for p in target_dir.glob("*.parquet")]
+                if tables:
+                    existing = pa.concat_tables(tables).to_pandas()
+            except Exception as exc:  # pragma: no cover - I/O errors
+                print(f"警告：读取 {target_dir} 失败：{exc}")
+        if not existing.empty:
+            existing.columns = [c.lower() for c in existing.columns]
+            if "year" not in existing.columns:
+                existing["year"] = year
+        all_cols = sorted({*partition_new.columns, *existing.columns})
+        partition_new = partition_new.reindex(columns=all_cols)
+        if not existing.empty:
+            existing = existing.reindex(columns=all_cols)
+        combined = (
+            pd.concat([existing, partition_new], ignore_index=True)
+            if not existing.empty
+            else partition_new
+        )
+        if "retrieved_at" in combined.columns:
+            combined["retrieved_at"] = pd.to_datetime(
+                combined["retrieved_at"], errors="coerce"
+            )
+        dedup_keys = [c for c in (group_keys or []) if c in combined.columns]
+        extra_sort: List[str] = []
+        if "retrieved_at" in combined.columns:
+            extra_sort.append("retrieved_at")
+        if dedup_keys:
+            flagged = mark_latest(
+                combined,
+                group_keys=dedup_keys,
+                extra_sort_keys=extra_sort,
+            )
+            if "is_latest" in flagged.columns:
+                combined = flagged[flagged["is_latest"] == 1].drop(
+                    columns=["is_latest"]
+                )
+            else:
+                combined = flagged
+            combined = combined.drop_duplicates(subset=dedup_keys)
+        else:
+            combined = combined.drop_duplicates()
+        combined = combined.sort_index()
+        with TemporaryDirectory(dir=dataset_root.as_posix()) as tmpdir:
+            tmp_year_dir = Path(tmpdir) / f"year={year}"
+            ensure_dir(tmp_year_dir.as_posix())
+            table = pa.Table.from_pandas(combined, preserve_index=False)
+            pq.write_table(table, (tmp_year_dir / "data.parquet").as_posix())
+            if target_dir.exists():
+                shutil.rmtree(target_dir)
+            shutil.move(tmp_year_dir.as_posix(), target_dir.as_posix())
+        updated_any = True
+    return updated_any
 
 
 class RateLimiter:
@@ -277,6 +366,35 @@ class RateLimiter:
             if sleep_for > 0:
                 time.sleep(sleep_for)
         self.calls.append(time.time())
+
+
+@dataclass(frozen=True)
+class PeriodCombination:
+    report_type: Optional[int] = None
+    type_value: Optional[str] = None
+
+    def state_key(self, base: str, spec: DatasetSpec) -> str:
+        parts = [base]
+        if self.report_type is not None:
+            parts.append(f"rt={self.report_type}")
+        if spec.type_param and self.type_value is not None:
+            parts.append(f"{spec.type_param}={self.type_value}")
+        return ":".join(parts)
+
+    def as_params(self, spec: DatasetSpec) -> Dict[str, Any]:
+        params: Dict[str, Any] = {}
+        if self.report_type is not None:
+            params["report_type"] = self.report_type
+        if spec.type_param and self.type_value is not None:
+            params[spec.type_param] = self.type_value
+        return params
+
+
+@dataclass
+class PeriodFetchOutcome:
+    frames: List[pd.DataFrame] = field(default_factory=list)
+    last_successful_period: Optional[str] = None
+    had_failure: bool = False
 
 
 class JsonState:
@@ -317,11 +435,15 @@ class MarketDatasetDownloader:
         use_vip: bool = True,
         max_per_minute: int = 90,
         state_path: Optional[str] = None,
+        allow_future: bool = False,
+        max_retries: int = 3,
     ) -> None:
         self.pro = pro
         self.data_dir = data_dir
         self.use_vip = use_vip
         self.limiter = RateLimiter(max_per_minute=max_per_minute)
+        self.allow_future = allow_future
+        self.max_retries = max_retries
         state_file = (
             Path(state_path)
             if state_path
@@ -385,30 +507,50 @@ class MarketDatasetDownloader:
         end_date: str,
         refresh_periods: int,
     ) -> None:
-        state_key = "last_period"
-        default_start = spec.default_start
-        last_period = self.state.get(spec.name, state_key, default_start)
-        effective_start = start_date or last_period
-        effective_start = max(effective_start, spec.default_start)
-        if refresh_periods and last_period:
-            backfill_start = move_quarters(last_period, -max(refresh_periods, 0))
-            if backfill_start < effective_start:
-                effective_start = backfill_start
-        periods = quarter_periods(effective_start, end_date)
-        if not periods:
-            return
         report_types = self._resolve_report_types(spec, options)
         type_values = self._resolve_type_values(spec, options)
+        combinations = self._build_period_combinations(report_types, type_values)
+        method_name, paginate = self._resolve_method(spec)
         collected: List[pd.DataFrame] = []
-        for period_value in periods:
-            frames = self._fetch_period(spec, period_value, report_types, type_values)
-            if frames:
-                collected.extend(frames)
-            self.state.update(spec.name, state_key, period_value)
-        combined = self._concat_and_dedup(collected, spec.primary_keys)
+        pending_updates: List[Tuple[str, str, str]] = []
+        period_end = self._bounded_period_end(end_date)
+        for combo in combinations:
+            state_key = combo.state_key("last_period", spec)
+            last_period = self.state.get(spec.name, state_key, spec.default_start)
+            effective_start = start_date or last_period or spec.default_start
+            effective_start = max(effective_start, spec.default_start)
+            if refresh_periods and last_period:
+                backfill_start = move_quarters(last_period, -max(refresh_periods, 0))
+                if backfill_start < effective_start:
+                    effective_start = max(backfill_start, spec.default_start)
+            if effective_start > period_end:
+                continue
+            periods = quarter_periods(effective_start, period_end)
+            if not periods:
+                continue
+            outcome = self._collect_periods(spec, periods, combo, method_name, paginate)
+            collected.extend(outcome.frames)
+            if (
+                not outcome.had_failure
+                and outcome.last_successful_period is not None
+            ):
+                pending_updates.append(
+                    (spec.name, state_key, outcome.last_successful_period)
+                )
+        combined = self._concat_and_dedup(collected, spec)
+        write_ok = True
         if combined is not None:
             year_col = spec.default_year_column
-            write_parquet_dataset(combined, self.data_dir, spec.name, year_col)
+            write_ok = write_parquet_dataset(
+                combined,
+                self.data_dir,
+                spec.name,
+                year_col,
+                group_keys=spec.dedup_group_keys or spec.primary_keys,
+            )
+        if write_ok:
+            for dataset, key, value in pending_updates:
+                self.state.update(dataset, key, value)
 
     def _download_calendar(
         self,
@@ -420,21 +562,35 @@ class MarketDatasetDownloader:
         state_key = "last_date"
         default_start = spec.default_start
         last_date = self.state.get(spec.name, state_key, default_start)
-        effective_start = start_date or last_date
+        effective_start = start_date or last_date or spec.default_start
         effective_start = max(effective_start, spec.default_start)
         windows = month_windows(effective_start, end_date)
         if not windows:
             return
         collected: List[pd.DataFrame] = []
+        last_completed: Optional[str] = None
+        had_failure = False
         for win_start, win_end in windows:
             df = self._fetch_window(spec, win_start, win_end)
-            if df is not None and not df.empty:
+            if df is None:
+                had_failure = True
+                continue
+            if not df.empty:
                 collected.append(df)
-            self.state.update(spec.name, state_key, win_end)
-        combined = self._concat_and_dedup(collected, spec.primary_keys)
+            last_completed = win_end
+        combined = self._concat_and_dedup(collected, spec)
+        write_ok = True
         if combined is not None:
             year_col = spec.default_year_column
-            write_parquet_dataset(combined, self.data_dir, spec.name, year_col)
+            write_ok = write_parquet_dataset(
+                combined,
+                self.data_dir,
+                spec.name,
+                year_col,
+                group_keys=spec.dedup_group_keys or spec.primary_keys,
+            )
+        if write_ok and not had_failure and last_completed is not None:
+            self.state.update(spec.name, state_key, last_completed)
 
     def _resolve_report_types(
         self, spec: DatasetSpec, options: Dict[str, Any]
@@ -466,51 +622,89 @@ class MarketDatasetDownloader:
             return list(spec.type_values)
         return []
 
-    def _fetch_period(
+    def _build_period_combinations(
         self,
-        spec: DatasetSpec,
-        period_value: str,
         report_types: Sequence[int],
         type_values: Sequence[str],
-    ) -> List[pd.DataFrame]:
-        frames: List[pd.DataFrame] = []
+    ) -> List[PeriodCombination]:
+        rt_values = list(report_types) if report_types else [None]
+        type_opts = list(type_values) if type_values else [None]
+        return [
+            PeriodCombination(report_type=rt, type_value=tv)
+            for rt in rt_values
+            for tv in type_opts
+        ]
+
+    def _resolve_method(self, spec: DatasetSpec) -> Tuple[str, bool]:
         vip = spec.vip_api if self.use_vip else None
         method_name = vip or spec.api
         paginate = (
             spec.vip_supports_pagination if vip else spec.api_supports_pagination
         )
-        combos: Iterable[Dict[str, Any]] = [{}]
-        if report_types:
-            combos = [{"report_type": rt} for rt in report_types]
-        for combo in combos:
-            type_iter: Iterable[Optional[str]]
-            if type_values:
-                type_iter = list(type_values)
-            else:
-                type_iter = [None]
-            for type_value in type_iter:
-                params = dict(spec.extra_params)
-                params[spec.period_field] = period_value
-                params.update(combo)
-                if spec.type_param and type_value is not None:
-                    params[spec.type_param] = type_value
-                df = self._call_api(
-                    method_name,
-                    params,
-                    spec.fields,
-                    paginate=paginate,
-                )
-                if df is None or df.empty:
-                    continue
-                if (
-                    spec.type_param
-                    and spec.type_param not in df.columns
-                    and type_value is not None
-                ):
-                    df = df.copy()
-                    df[spec.type_param] = type_value
-                frames.append(df)
-        return frames
+        return method_name, paginate
+
+    def _bounded_period_end(self, end_date: str) -> str:
+        if self.allow_future:
+            return end_date
+        limit = last_publishable_period(date.today())
+        return min(end_date, limit)
+
+    def _collect_periods(
+        self,
+        spec: DatasetSpec,
+        periods: Sequence[str],
+        combo: PeriodCombination,
+        method_name: str,
+        paginate: bool,
+    ) -> PeriodFetchOutcome:
+        outcome = PeriodFetchOutcome()
+        for period_value in periods:
+            df, success = self._fetch_period(
+                spec,
+                method_name,
+                paginate,
+                period_value,
+                combo,
+            )
+            if not success:
+                outcome.had_failure = True
+                continue
+            outcome.last_successful_period = period_value
+            if df is not None and not df.empty:
+                outcome.frames.append(df)
+        return outcome
+
+    def _fetch_period(
+        self,
+        spec: DatasetSpec,
+        method_name: str,
+        paginate: bool,
+        period_value: str,
+        combo: PeriodCombination,
+    ) -> Tuple[Optional[pd.DataFrame], bool]:
+        params = dict(spec.extra_params)
+        params[spec.period_field] = period_value
+        params.update(combo.as_params(spec))
+        df = self._call_api(
+            method_name,
+            params,
+            spec.fields,
+            paginate=paginate,
+        )
+        if df is None:
+            return None, False
+        if df.empty:
+            return df, True
+        frame = df.copy()
+        if (
+            spec.type_param
+            and spec.type_param not in frame.columns
+            and combo.type_value is not None
+        ):
+            frame[spec.type_param] = combo.type_value
+        if combo.report_type is not None and "report_type" not in frame.columns:
+            frame["report_type"] = combo.report_type
+        return frame, True
 
     def _fetch_window(
         self, spec: DatasetSpec, start: str, end: str
@@ -540,55 +734,101 @@ class MarketDatasetDownloader:
                 return self.pro.query(api_name, **kwargs)
 
             func = fallback_call
-        self.limiter.wait()
-        try:
-            if not paginate:
-                call_params = params.copy()
-                if fields:
-                    call_params.setdefault("fields", fields)
-                return func(**call_params)
-            offset = 0
-            limit = params.get("limit", 10000)
-            rows: List[pd.DataFrame] = []
-            while True:
-                call_params = params.copy()
-                call_params["limit"] = limit
-                call_params["offset"] = offset
-                if fields:
-                    call_params.setdefault("fields", fields)
-                df = func(**call_params)
-                if df is None or df.empty:
-                    break
-                rows.append(df)
-                if len(df) < limit:
-                    break
-                offset += limit
-            if not rows:
-                return None
-            return pd.concat(rows, ignore_index=True)
-        except Exception as exc:  # pragma: no cover - network failure
-            print(f"警告：调用 {api_name} 失败：{exc}")
-            return None
+        attempt = 0
+        while attempt <= self.max_retries:
+            self.limiter.wait()
+            try:
+                limit_val = params.get("limit", 10000) or 10000
+                try:
+                    limit = int(limit_val)
+                except (TypeError, ValueError):
+                    limit = 10000
+                if limit <= 0:
+                    limit = 10000
+                rows: List[pd.DataFrame] = []
+                offset = 0
+                pages = 0
+                use_pagination = paginate
+                while True:
+                    call_params = params.copy()
+                    if use_pagination or offset > 0:
+                        call_params["limit"] = limit
+                        call_params["offset"] = offset
+                    elif "limit" in call_params:
+                        call_params.setdefault("limit", limit)
+                    if fields:
+                        call_params.setdefault("fields", fields)
+                    df = func(**call_params)
+                    if df is None or df.empty:
+                        break
+                    rows.append(df)
+                    pages += 1
+                    if len(df) < limit or pages >= MAX_PAGES:
+                        break
+                    offset += limit
+                    use_pagination = True
+                if not rows:
+                    return pd.DataFrame()
+                return pd.concat(rows, ignore_index=True)
+            except Exception as exc:  # pragma: no cover - network failure
+                attempt += 1
+                if attempt > self.max_retries:
+                    print(f"警告：调用 {api_name} 失败：{exc}")
+                    return None
+                wait_time = min(2 ** (attempt - 1), 60)
+                print(
+                    f"警告：调用 {api_name} 异常，{wait_time:.0f}s 后重试"
+                    f"（第 {attempt}/{self.max_retries} 次）: {exc}"
+                )
+                time.sleep(wait_time)
+        return None
 
     def _concat_and_dedup(
-        self, frames: Sequence[pd.DataFrame], primary_keys: Sequence[str]
+        self,
+        frames: Sequence[pd.DataFrame],
+        spec: DatasetSpec,
     ) -> Optional[pd.DataFrame]:
         valid = [df for df in frames if df is not None and not df.empty]
         if not valid:
             return None
-        combined = pd.concat(valid, ignore_index=True)
+        prepared: List[pd.DataFrame] = []
+        timestamp = pd.Timestamp.utcnow()
+        for df in valid:
+            frame = df.copy()
+            if "retrieved_at" not in frame.columns:
+                frame["retrieved_at"] = timestamp
+            prepared.append(frame)
+        combined = pd.concat(prepared, ignore_index=True)
         for col in ("ts_code", "end_date", "ann_date"):
             if col in combined.columns:
                 combined[col] = combined[col].astype(str)
-        if primary_keys:
-            keep = [c for c in primary_keys if c in combined.columns]
-            if keep:
-                combined = combined.drop_duplicates(subset=keep, keep="last")
+        dedup_keys = [
+            c
+            for c in (spec.dedup_group_keys or spec.primary_keys)
+            if c in combined.columns
+        ]
+        if "retrieved_at" in combined.columns:
+            combined["retrieved_at"] = pd.to_datetime(
+                combined["retrieved_at"], errors="coerce"
+            )
+        extra_sort_keys: List[str] = []
+        if "retrieved_at" in combined.columns:
+            extra_sort_keys.append("retrieved_at")
+        if dedup_keys:
+            flagged = mark_latest(
+                combined,
+                group_keys=dedup_keys,
+                extra_sort_keys=extra_sort_keys,
+            )
+            if "is_latest" in flagged.columns:
+                combined = flagged[flagged["is_latest"] == 1].drop(
+                    columns=["is_latest"]
+                )
             else:
-                combined = combined.drop_duplicates()
+                combined = flagged
+            combined = combined.drop_duplicates(subset=dedup_keys)
         else:
             combined = combined.drop_duplicates()
-        combined["retrieved_at"] = pd.Timestamp.utcnow()
         return combined
 
 

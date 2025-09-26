@@ -163,6 +163,7 @@ def cmd_download(args: argparse.Namespace) -> None:
             use_vip=use_vip,
             max_per_minute=max_per_minute,
             state_path=cfg.get("state_path"),
+            allow_future=bool(cfg.get("allow_future")),
         )
         downloader.run(
             dataset_requests,
