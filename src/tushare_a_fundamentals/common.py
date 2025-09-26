@@ -3,6 +3,7 @@ import math
 import os
 import sys
 import time
+from decimal import Decimal, InvalidOperation
 from dataclasses import dataclass
 from datetime import date
 from typing import Dict, List, Literal, Optional, Sequence, Set, Tuple
@@ -286,12 +287,20 @@ def _has_enough_credits(pro, required: int = 5000) -> bool:
     total = _available_credits(pro)
     if total is None:
         return False
-    total_f = float(total)
-    required_f = float(required)
-    if total_f >= required_f:
+    try:
+        total_d = Decimal(str(total))
+        required_d = Decimal(str(required))
+    except (InvalidOperation, ValueError):
+        total_f = float(total)
+        required_f = float(required)
+        if total_f >= required_f:
+            return True
+        return math.isclose(total_f, required_f, rel_tol=1e-6, abs_tol=1e-3)
+
+    if total_d >= required_d:
         return True
     # Allow small rounding errors from the TuShare API (values like 4999.999).
-    return math.isclose(total_f, required_f, rel_tol=0.0, abs_tol=1e-3)
+    return 0 <= (required_d - total_d) <= Decimal("0.001")
 
 
 def _concat_non_empty(dfs: List[pd.DataFrame]) -> pd.DataFrame:
