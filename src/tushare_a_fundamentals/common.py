@@ -1,4 +1,5 @@
 import importlib
+import math
 import os
 import sys
 import time
@@ -285,7 +286,12 @@ def _has_enough_credits(pro, required: int = 5000) -> bool:
     total = _available_credits(pro)
     if total is None:
         return False
-    return float(total) + 1e-6 >= float(required)
+    total_f = float(total)
+    required_f = float(required)
+    if total_f >= required_f:
+        return True
+    # Allow small rounding errors from the TuShare API (values like 4999.999).
+    return math.isclose(total_f, required_f, rel_tol=0.0, abs_tol=1e-3)
 
 
 def _concat_non_empty(dfs: List[pd.DataFrame]) -> pd.DataFrame:
