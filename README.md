@@ -2,26 +2,37 @@
 
 本项目旨在提供命令行脚本批量抓取 A 股上市公司基本面数据，并允许输出年度，季度累计，或者单季三种口径。
 
-## 批量下载功能开发进度
+> 由于该项目主要目的是全A市场全量数据下载，强烈建议使用5000积分API账户，非全量数据的下载功能尚未完善，不建议使用（本项目未实现个股枚举 fallback）
 
-> 现已提供统一调度器，可按期优先使用 TuShare VIP 接口抓取以下数据集，非 VIP 接口则按月窗口滚动补齐。
+* 利润表
 
-* [x] 利润表
-* [x] 资产负债表
-* [x] 现金流量表
-* [x] 业绩预告
-* [x] 业绩快报
-* [x] 分红送股
-* [x] 财务指标数据
-* [x] 财务审计意见
-* [x] 主营业务构成（默认抓取 type=P/D）
-* [x] 财报披露计划
+* 资产负债表
+
+* 现金流量表
+
+* 业绩预告
+
+* 业绩快报
+
+* 分红送股
+
+* 财务指标数据
+
+* 财务审计意见
+
+* 主营业务构成
+
+* 财报披露计划
 
 提示：所有命令行输出与错误信息均为中文；代码实现为英文。
 
-## 运行原理/快速运行指南
+## 最小可行步骤
 
-1. 缓存原始表、构建 parquet 数仓，并同步导出 CSV：`funda download`
+```bash
+cp config.example.yaml config.yml
+cp .env.example .env   # 填好 TUSHARE_TOKEN
+funda download         # 批量调度下载，缓存，并导出CSV
+```
 
 ### 多数据集批量下载（VIP 优先）
 
@@ -37,23 +48,25 @@ funda download --datasets income balancesheet cashflow forecast express \
 
 ```yaml
 datasets:
-  - name: income
-    report_types: [1]
-  - balancesheet
-  - cashflow
-  - forecast
-  - express
-  - dividend
-  - fina_indicator
-  - fina_audit
-  - name: fina_mainbz
-    type: ["P", "D"]
- - disclosure_date
-data_dir: data
-use_vip: true
-max_per_minute: 80
+  - name: income            # Income statement
+    report_types: [1]       # Consolidated statement
+  - name: balancesheet      # Balance sheet
+    report_types: [1]       # Consolidated statement
+  - name: cashflow          # Cash flow statement
+    report_types: [1]       # Consolidated statement
+  - name: forecast          # Earnings preannouncement
+  - name: express           # Preliminary unaudited results
+  - name: dividend          # Dividend information
+  - name: fina_indicator    # Financial indicators
+  - name: fina_audit        # Financial audit
+  - name: fina_mainbz       # Financial main business
+    type: ["P", "D", "I"]   # By product, domain, industry
+  - name: disclosure_date   # Disclosure date
+data_dir: "data"
+use_vip: true               # Only the VIP version of Tushare token supports batch download
+max_per_minute: 90
 max_retries: 3
-recent_quarters: 8  # 按季度回刷窗口
+recent_quarters: 8          # Re-fetches the most recent N quarters to pick up revisions
 ```
 
 运行后输出位于 `data/<dataset>/year=YYYY/part-*.parquet`，增量状态写入 `data/_state/state.json`，默认滚动补齐最近 `recent_quarters` 个季度并继续增量下载。
