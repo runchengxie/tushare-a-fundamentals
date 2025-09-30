@@ -34,6 +34,8 @@ cp .env.example .env   # 填好 TUSHARE_TOKEN
 funda download         # 批量调度下载，缓存，并导出CSV
 ```
 
+提示：缺少 `config.yml/config.yaml` 时会自动使用默认参数；日志会提示可以复制模板来自定义。
+
 ### 多数据集批量下载（VIP 优先）
 
 `funda download` 现在支持直接针对多个数据集批量抓取：
@@ -70,6 +72,7 @@ recent_quarters: 8          # Re-fetches the most recent N quarters to pick up r
 ```
 
 运行后输出位于 `data/<dataset>/year=YYYY/part-*.parquet`，增量状态写入 `data/_state/state.json`，默认滚动补齐最近 `recent_quarters` 个季度并继续增量下载。
+凡是下载列表中包含 `income` 的任务，会按照配置里的导出选项自动生成 `cumulative/single/annual` CSV；其他数据集保持 parquet 形式，可按需再运行 `funda export`。
 
 注意：`--raw-only`、`--build-only`、`--force` 仅适用于旧版利润表流程，若在多数据集模式中使用会被忽略或报错。
 
@@ -79,6 +82,8 @@ recent_quarters: 8          # Re-fetches the most recent N quarters to pick up r
 
 2. 在已经有缓存数据的情况下，重新导出 CSV 或改写格式：`funda export`
 
+3. 查看/维护增量状态与失败清单：`funda state show|clear|ls-failures`
+
 > ### 备注
 >
 > 上述指令默认下载，检查，并导出近10年数据（即最近40个季度的季度累计合并报表数据，也就是tushare API的默认返回格式），但是必要时可通过指令的附加选项来微调行为，例如只下载近五年的数据（--year 5，代码会自动转化为最近可供下载的20个季度），也可直接指定想要下载的季度数，这些选择可以通过指令的选项或者更改config.yaml的设置方式来达成
@@ -87,9 +92,10 @@ recent_quarters: 8          # Re-fetches the most recent N quarters to pick up r
 
 ### 配置
 
-* `config.yml`（根目录）：CLI 行为（模式、时间范围、输出目录、字段选择等）。
+* `config.yml` 或 `config.yaml`（根目录）：CLI 行为（模式、时间范围、输出目录、字段选择等）。
 
   * 初次使用：从模板复制一份并按需修改：`cp config.example.yaml config.yml`
+  * 若两者都存在，程序会拒绝继续并要求只保留一个；若均不存在，会打印提示并使用内建默认值。
 
 * `.env`（本地）：环境变量文件，至少包含 Tushare Token。
 
@@ -145,29 +151,31 @@ funda download --since 2010-01-01 --until 2019-12-31
 
 * 提供 `--since`（可选 `--until`）时优先使用日期范围；
 
-* `--report-types 1,6`：指定报表 `report_type`（逗号分隔），默认仅下载 `1`（合并报表）；
+* `--datasets income balancesheet ...`：直接在命令行启用多数据集模式；与配置项 `datasets` 互补。
 
-* `--recent-quarters N`：滚动刷新最近 N 个季度（默认 8，设置为 0 可完全关闭刷新窗口）；
+* `--data-dir DIR`：多数据集输出目录（默认 `data`）。状态与失败列表亦存储在该目录下的 `_state/`。
 
-* `--max-retries N`：接口异常时最多重试 N 次（默认 3，设为 0 表示只尝试一次）；
+* `--use-vip` / `--no-vip`：显式启用/禁用 VIP 接口，默认启用；`--max-per-minute N` 控制限速窗口（默认 90）。
 
-* `--skip-existing`：仅补缺，不进行滚动刷新；
+* `--report-types 1,6`：指定报表 `report_type`（逗号或空格分隔），默认仅下载 `1`（合并报表）。
 
-* `--raw-only`：只下载 raw，不构建数仓；
+* `--recent-quarters N`：滚动刷新最近 N 个季度（默认 8，设为 0 表示纯补缺）。配置文件中的同名字段共享该默认值。
 
-* `--build-only`：跳过下载，仅由已有 raw 构建数仓；
+* `--max-retries N`：接口异常时最多重试 N 次（默认 3，设为 0 表示只尝试一次）。
+
+* `--state-path PATH`：覆盖增量状态文件位置；JSON 默认 `<data_dir>/_state/state.json`，SQLite 后端默认 `meta/state.db`。
+
+* `--raw-only`：只下载 raw，不构建数仓；`--build-only`：跳过下载，仅由已有 raw 构建数仓。
 
 * 默认会依据披露截止日裁掉未来季度，如需强制包含可加 `--allow-future`；
 
-* `--no-export` / `--export`：关闭或显式开启派生数据导出（默认开启，失败时仅警告）；
-
-* `--export-format` / `--export-out-dir`：调整导出格式（默认 csv）与输出目录；
-
-* `--export-kinds` / `--export-years` / `--export-annual-strategy`：微调年度/单季/季度累计导出口径与年份窗口；
+* `--no-export` / `--export`：关闭或显式开启派生数据导出；`--export-format`、`--export-out-dir`、`--export-kinds`、`--export-years`、`--export-annual-strategy` 用于自定义 CSV 输出。
 
 * 每次下载如遇失败 period/window，会在 `data/_state/failures/` 下生成对应 JSON 清单，方便后续优先补齐。
 
 * `--strict-export`：导出失败时返回非零状态码（默认仅记录警告并继续）。
+
+*注：`--skip-existing` 仅对旧版单数据集流程生效，在多数据集模式下请使用 `recent_quarters: 0` 控制补缺行为。*
 
 全量下载（建议）：
 

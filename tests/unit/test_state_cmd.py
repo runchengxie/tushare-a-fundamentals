@@ -1,0 +1,75 @@
+import json
+from argparse import Namespace
+from pathlib import Path
+
+import pytest
+
+from tushare_a_fundamentals.commands import state as state_cmd
+
+pytestmark = pytest.mark.unit
+
+
+def make_args(**kwargs):
+    defaults = dict(
+        action="show",
+        backend="auto",
+        state_path=None,
+        data_dir="data",
+        dataset=None,
+        year=None,
+        key=None,
+        value=None,
+    )
+    defaults.update(kwargs)
+    return Namespace(**defaults)
+
+
+def test_state_show_json(tmp_path, capsys):
+    data_dir = tmp_path / "data"
+    state_file = data_dir / "_state" / "state.json"
+    state_file.parent.mkdir(parents=True)
+    state_file.write_text(json.dumps({"income": {"last_period": "20231231"}}), "utf-8")
+
+    args = make_args(action="show", backend="json", state_path=None, data_dir=str(data_dir))
+    state_cmd.cmd_state(args)
+
+    captured = capsys.readouterr()
+    assert "20231231" in captured.out
+
+
+def test_state_clear_json(tmp_path):
+    data_dir = tmp_path / "data"
+    state_file = data_dir / "_state" / "state.json"
+    state_file.parent.mkdir(parents=True)
+    state_file.write_text(json.dumps({"income": {"foo": "bar"}}), "utf-8")
+
+    args = make_args(
+        action="clear",
+        backend="json",
+        state_path=None,
+        data_dir=str(data_dir),
+        dataset="income",
+        key="foo",
+    )
+    state_cmd.cmd_state(args)
+
+    payload = json.loads(state_file.read_text("utf-8"))
+    assert payload == {}
+
+
+def test_state_ls_failures(tmp_path, capsys):
+    data_dir = tmp_path / "data"
+    failure_dir = data_dir / "_state" / "failures"
+    failure_dir.mkdir(parents=True)
+    sample = {
+        "dataset": "income",
+        "entries": [{"period": "20231231"}],
+    }
+    (failure_dir / "income_periods.json").write_text(json.dumps(sample), "utf-8")
+
+    args = make_args(action="ls-failures", data_dir=str(data_dir))
+    state_cmd.cmd_state(args)
+
+    captured = capsys.readouterr()
+    assert "income_periods.json" in captured.out
+    assert "1 条记录" in captured.out

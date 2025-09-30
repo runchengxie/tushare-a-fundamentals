@@ -115,6 +115,10 @@ def load_yaml(path: Optional[str]) -> dict:
     ]
     existing = [p for p in candidates if os.path.exists(p)]
     if not existing:
+        print(
+            "提示：未检测到 config.yml/config.yaml，将使用内建默认值。"
+            "可通过 'cp config.example.yaml config.yml' 进行自定义"
+        )
         return {}
     if len(existing) > 1:
         eprint("错误：检测到 config.yml 与 config.yaml 同时存在，请保留一个以保证唯一事实")
@@ -469,20 +473,24 @@ def _concat_non_empty(dfs: List[pd.DataFrame]) -> pd.DataFrame:
     for df in dfs:
         if df is None or not isinstance(df, pd.DataFrame):
             continue
+        df = df.dropna(axis=1, how="all")
+        if df.shape[1] == 0:
+            continue
         for col in df.columns:
             if col not in seen_set:
                 seen_set.add(col)
                 seen_order.append(col)
-        if df.shape[0] == 0 or df.shape[1] == 0:
+        if df.shape[0] == 0:
             continue
         if not df.notna().to_numpy().any():
             continue
         kept.append(df.copy())
     if not kept:
         return pd.DataFrame(columns=seen_order) if seen_order else pd.DataFrame()
+    combined = pd.concat(kept, ignore_index=True)
     if seen_order:
-        kept = [frame.reindex(columns=seen_order) for frame in kept]
-    return pd.concat(kept, ignore_index=True)
+        combined = combined.loc[:, [col for col in seen_order if col in combined.columns]]
+    return combined
 
 
 def _check_parquet_dependency() -> bool:

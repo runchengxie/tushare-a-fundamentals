@@ -87,6 +87,30 @@ def parse_cli() -> argparse.Namespace:
     )
     sp_cov.add_argument("--csv", type=str, help="缺口清单另存为 CSV")
 
+    sp_state = sub.add_parser("state", help="查看与维护增量状态信息")
+    sp_state.add_argument(
+        "action",
+        choices=["show", "clear", "set", "ls-failures"],
+        help="操作类型",
+    )
+    sp_state.add_argument(
+        "--backend",
+        choices=["auto", "json", "sqlite"],
+        default="auto",
+        help="状态后端：auto/json/sqlite（默认 auto）",
+    )
+    sp_state.add_argument("--state-path", help="状态文件或数据库路径")
+    sp_state.add_argument(
+        "--data-dir",
+        default="data",
+        help="多数据集数据目录（默认 data）",
+    )
+    sp_state.add_argument("--dataset", help="指定数据集")
+    sp_state.add_argument("--year", type=int, help="SQLite 状态时可指定年份")
+    sp_state.add_argument("--key", help="JSON 状态键名")
+    sp_state.add_argument("--value", help="JSON 状态值")
+    sp_state.set_defaults(cmd="state")
+
     sp_dl = sub.add_parser("download", help="下载数据（默认增量补全；--force 覆盖）")
     sp_dl.add_argument("--config", type=str, default=None)
     sp_dl.add_argument("--years", "--year", dest="years", type=int)
@@ -242,6 +266,10 @@ def main() -> None:
         from .commands.coverage import cmd_coverage
 
         return cmd_coverage(args)
+    if getattr(args, "cmd", None) == "state":
+        from .commands.state import cmd_state
+
+        return cmd_state(args)
     cfg_file = load_yaml(args.config)
     defaults = {
         "years": 10,
