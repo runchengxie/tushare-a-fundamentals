@@ -1,10 +1,40 @@
 # Example configuration (please copy as config.yml and modify as needed)
+
+# --- Time coverage ---
+# Downloads are quarter-based. If 'years' is set, it counts back years*4 quarters
+# from the latest available quarter. For example, years: 10 equals 40 quarters.
+# Alternatively, comment out 'years' and set 'quarters' directly.
+# Priority: --since/--until > quarters > years.
 years: 10
 # quarters: 40
-fields: "ts_code,ann_date,f_ann_date,end_date,report_type,comp_type,update_flag,total_revenue,revenue,total_cogs,operate_profit,total_profit,income_tax,n_income,n_income_attr_p,ebit,ebitda,rd_exp"
-outdir: "out"
-prefix: "income"
-format: "parquet"
+
+
+# --- Data refresh ---
+# recent_quarters controls the rolling refresh window: re-fetches the most recent N quarters to pick up revisions. # Set recent_quarters to 0 to disable this behavior; skip_existing: true skips the refresh entirely (only fetch missing combos).
+recent_quarters: 8
+# The 'download' subcommand defaults to patch missing periods plus a rolling refresh window.
+skip_existing: false
+
+# --- fields (optional): column allowlist ---
+# - Leave empty or comment out: do not pass the `fields` parameter; the API returns all columns
+#   (recommended for robustness, automatically picks up newly added columns).
+# - When set: request only the listed columns to reduce bandwidth and disk usage,
+#   but newly added columns will be skipped and you must maintain this list manually.
+# - Format: a comma-separated list of TuShare field names that match the API docs.
+#   Invalid names may be ignored or cause an error, depending on the API.
+# - Scope: global setting that applies to all datasets in this run.
+# - Recommendation: fetch full columns during download; do column trimming later
+#   at export/analysis time to avoid schema drift during merges.
+#
+# Example (common income-statement fields; for illustration only):
+# fields: ts_code,ann_date,f_ann_date,end_date,report_type,comp_type,update_flag,total_revenue,revenue,total_cogs,operate_profit,total_profit,income_tax,n_income,n_income_attr_p,ebit,ebitda,rd_exp
+#
+# Default (all columns):
+fields: ""
+
+
+# --- Enable multi-dataset batch download ---
+# About report_types 
 # By default, only consolidated reports (report_type=1) are downloaded.
 # 1. Consolidated Statements: The latest consolidated financial statements of the listed company (this is the default type).
 # 2. Quarterly Consolidated Statements: Consolidated financial statements for a single quarter.
@@ -18,29 +48,37 @@ format: "parquet"
 # 10. Pre-adjustment Parent Company Statements: The original financial statement data of the parent company before any adjustments were made.
 # 11. Pre-adjustment Consolidated Statements: The original data of the consolidated financial statements before adjustments were made.
 # 12. Pre-adjustment Parent Company Statements: The original data of the parent company's statements, retained from before a change or restatement occurred.
-report_types: "1"
-# The 'download' subcommand defaults to patch missing periods plus a rolling refresh window.
-skip_existing: false
-# recent_quarters controls the rolling refresh window: re-fetches the most recent N quarters to pick up revisions.
-# Set recent_quarters to 0 to disable this behavior; skip_existing: true skips the refresh entirely (only fetch missing combos).
-recent_quarters: 8
-# Enable multi-dataset batch download (Example)
-# datasets:
-#   - name: income
-#     report_types: [1]
-#   - balancesheet
-#   - cashflow
+
+datasets:
+  - name: income            # Income statement
+    report_types: [1]       # Consolidated statement
+  - name: balancesheet      # Balance sheet
+    report_types: [1]       # Consolidated statement
+  - name: cashflow          # Cash flow statement
+    report_types: [1]       # Consolidated statement
 #   - forecast
 #   - express
 #   - dividend
 #   - name: fina_mainbz
 #     type: ["P", "D", "I"]
-# data_dir: "data"
+data_dir: "data"
 # Only the VIP version of Tushare token supports batch download
-# use_vip: true       
-# max_per_minute: 90
-# max_retries: 3
+use_vip: true       
+max_per_minute: 90
+max_retries: 3
+
+# state_path (optional): path to the incremental state file (JSON).
+# - Leave null: defaults to <data_dir>/_state/state.json.
+# - Purpose: stores watermarks like the last completed quarter/date per dataset
+#   (and per report_type/type combination), so future runs resume instead of
+#   refetching everything.
+# - Only used in multi-dataset/batch mode; ignored by the legacy single-dataset flow.
+# - To reset progress, delete the file or point state_path to a new location.
 # state_path: null
+# state_path: null
+
+
+# --- Export behavior configuration -- 
 # Derived export controls (download -> parquet snapshot -> CSV export)
 export_enabled: true
 export_out_format: "csv"
@@ -52,5 +90,7 @@ export_annual_strategy: "cumulative"
 # export_strict - When set to true, an error during the export phase will throw an exception and terminate the task; the default (false) only shows a warning and keeps the already built Parquet files.
 # export_strict: false
 # allow_future: false  # Set to true to allow fetching future quarters that have not yet been disclosed
+
+# --- Tushare token ---
 # Fallback for manually setting up the Tushare API token when environment variables cannot be used (not recommended; use only when no other options exist).
 # token: "your_tushare_token"
