@@ -4,25 +4,25 @@
 
 > 由于该项目主要目的是全A市场全量数据下载，强烈建议使用5000积分API账户，非全量数据的下载功能尚未完善，不建议使用（本项目未实现个股枚举 fallback）
 
-* 利润表
+* [利润表](https://tushare.pro/document/2?doc_id=33)
 
-* 资产负债表
+* [资产负债表](https://tushare.pro/document/2?doc_id=36)
 
-* 现金流量表
+* [现金流量表](https://tushare.pro/document/2?doc_id=44)
 
-* 业绩预告
+* [业绩预告](https://tushare.pro/document/2?doc_id=45)
 
-* 业绩快报
+* [业绩快报](https://tushare.pro/document/2?doc_id=46)
 
-* 分红送股
+* [分红送股](https://tushare.pro/document/2?doc_id=103)
 
-* 财务指标数据
+* [财务指标数据](https://tushare.pro/document/2?doc_id=79)
 
-* 财务审计意见
+* [财务审计意见](https://tushare.pro/document/2?doc_id=80)
 
-* 主营业务构成
+* [主营业务构成](https://tushare.pro/document/2?doc_id=81)
 
-* 财报披露计划
+* [财报披露计划](https://tushare.pro/document/2?doc_id=162)
 
 提示：所有命令行输出与错误信息均为中文；代码实现为英文。
 
@@ -226,18 +226,6 @@ funda export --kinds annual,single,cumulative \\
 同样默认读取 `out` 目录下的数据集，并导出最近 10 年（若在 `download` 阶段未指定 `--export-years` 则默认沿用下载窗口）。若手动指定的窗口大于缓存中已有的季度范围，CLI 会提示并仅导出当前目录下已构建的数据。可通过 `--dataset-root`、`--years` 或 `--out-format` 参数微调。
 导出的结果统一使用 `ts_code` 作为证券主键，并按 `ts_code`、`end_date` 排序。
 
-## 状态管理
-
-`src/tushare_a_fundamentals/meta/state_store.py`
-
-一个极简的增量水位存储，加上失败清单记录，用来让下载可以**断点续跑、滚动回刷、失败可补**：
-
-* 把每个数据集的“最后成功 period/日期”写进 `data/_state/state.json`，下次从这个水位继续，而不是重抓全史。默认路径是 `<data_dir>/_state/state.json`，可用 `--state-path` 覆盖。 
-* period 型数据：按 `report_type` 和可选 `type` 组合生成独立的 state key（例如 `last_period:rt=1:type=P`），每个组合各自维护水位；抓取成功后批量更新对应 key。 
-* date 窗口型数据：以 `last_date` 记最后完成的月窗，继续滚动。
-* 失败 period/window 会被写入 `data/_state/failures/*.json`，下次可以优先补缺；成功则更新水位。
-* 这些 DataFrame 会先合并去重，保证仅保留每组的最新记录，再落地 parquet。
-
 ## 常见问题
 
 * CLI运行帮助
@@ -247,30 +235,6 @@ funda export --kinds annual,single,cumulative \\
     ```
 
 * 字段漂移导致读失败？新增列应设为 nullable，读取时使用统一 schema 合并。
-
-## 参考Tushare API文档
-
-可供参考的Tushare API基本面数据下载API文档：
-
-* [利润表](https://tushare.pro/document/2?doc_id=33)
-
-* [资产负债表](https://tushare.pro/document/2?doc_id=36)
-
-* [现金流量表](https://tushare.pro/document/2?doc_id=44)
-
-* [业绩预告](https://tushare.pro/document/2?doc_id=45)
-
-* [业绩快报](https://tushare.pro/document/2?doc_id=46)
-
-* [分红送股](https://tushare.pro/document/2?doc_id=103)
-
-* [财务指标数据](https://tushare.pro/document/2?doc_id=79)
-
-* [财务审计意见](https://tushare.pro/document/2?doc_id=80)
-
-* [主营业务构成](https://tushare.pro/document/2?doc_id=81)
-
-* [财报披露计划](https://tushare.pro/document/2?doc_id=162)
 
 ## 数据格式
 
