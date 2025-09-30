@@ -33,8 +33,9 @@ CODEBUDDY.md
 # config file
 config.yaml
 
-# File ouputs
-out/
+# Data and ouputs
+/data/
+/out/
 *.parquet
 *.csv
 
