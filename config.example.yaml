@@ -56,14 +56,18 @@ datasets:
     report_types: [1]       # Consolidated statement
   - name: cashflow          # Cash flow statement
     report_types: [1]       # Consolidated statement
-#   - forecast
-#   - express
-#   - dividend
-#   - name: fina_mainbz
-#     type: ["P", "D", "I"]
+  - name: forecast
+  - name: express
+  - name: dividend
+  - name: fina_indicator
+  - name: fina_audit
+  - name: fina_mainbz
+    type: ["P", "D", "I"]
+  - name: disclosure_date
+
 data_dir: "data"
-# Only the VIP version of Tushare token supports batch download
-use_vip: true       
+
+use_vip: true               # Only the VIP version of Tushare token supports batch download
 max_per_minute: 90
 max_retries: 3
 
