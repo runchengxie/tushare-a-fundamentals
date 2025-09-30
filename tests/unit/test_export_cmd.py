@@ -4,6 +4,7 @@ import pandas as pd
 import pytest
 
 from tushare_a_fundamentals.commands import export as expmod
+from tushare_a_fundamentals.common import build_income_export_tables
 
 pytestmark = pytest.mark.unit
 
@@ -114,3 +115,28 @@ def test_cmd_export_warns_when_years_exceed_cache(monkeypatch, capsys):
 
     captured = capsys.readouterr()
     assert "提示：导出窗口" in captured.err
+
+
+def test_build_income_export_tables_creates_all_kinds():
+    df = pd.DataFrame(
+        {
+            "ts_code": ["000001.SZ", "000001.SZ", "000001.SZ"],
+            "end_date": ["20230331", "20230630", "20231231"],
+            "total_revenue": [10.0, 30.0, 90.0],
+            "ann_date": ["20230401", "20230701", "20240110"],
+            "f_ann_date": ["20230402", "20230702", "20240111"],
+        }
+    )
+
+    built = build_income_export_tables(
+        df,
+        years=None,
+        kinds=["cumulative", "single", "annual"],
+        annual_strategy="cumulative",
+    )
+
+    assert set(built.keys()) == {"cumulative", "single", "annual"}
+    assert len(built["cumulative"]) == 3
+    single_values = built["single"]["total_revenue"].tolist()
+    assert single_values == [10.0, 20.0, 60.0]
+    assert "annual" in built and not built["annual"].empty

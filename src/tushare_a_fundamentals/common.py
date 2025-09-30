@@ -688,8 +688,16 @@ def save_tables(
 ) -> None:
     _ensure_outdir(outdir)
     reports_dir = os.path.join(outdir, "reports")
-    csv_dir = os.path.join(outdir, "csv")
-    parquet_dir = os.path.join(outdir, "parquet")
+    csv_dir = (
+        outdir
+        if fmt == "csv" and os.path.basename(outdir).lower() == "csv"
+        else os.path.join(outdir, "csv")
+    )
+    parquet_dir = (
+        outdir
+        if fmt == "parquet" and os.path.basename(outdir).lower() == "parquet"
+        else os.path.join(outdir, "parquet")
+    )
     _ensure_outdir(reports_dir)
     _ensure_outdir(csv_dir)
     _ensure_outdir(parquet_dir)
@@ -997,6 +1005,87 @@ def _export_tables(
     for k, df in tables.items():
         out[k] = df
     save_tables(out, out_dir, base, fmt)
+
+
+def build_income_export_tables(
+    cumulative_df: pd.DataFrame,
+    *,
+    years: Optional[int],
+    kinds: Sequence[str],
+    annual_strategy: str,
+) -> Dict[str, pd.DataFrame]:
+    """Build export tables for income data (cumulative/single/annual)."""
+
+    desired = [kind.strip() for kind in kinds if kind and kind.strip()]
+    if not desired or cumulative_df is None or cumulative_df.empty:
+        return {}
+
+    df = cumulative_df.copy()
+    if "is_latest" in df.columns:
+        df = df[df["is_latest"] == 1]
+    if df.empty:
+        return {}
+
+    df["end_date"] = df["end_date"].astype(str)
+    periods = sorted(df["end_date"].unique())
+    if years is not None:
+        requested_quarters = max(int(years) * 4, 0)
+        if requested_quarters and len(periods) > requested_quarters:
+            keep = set(periods[-requested_quarters:])
+            df = df[df["end_date"].isin(keep)]
+            periods = sorted(df["end_date"].unique())
+        elif requested_quarters == 0:
+            return {}
+
+    built: Dict[str, pd.DataFrame] = {}
+
+    if "cumulative" in desired and not df.empty:
+        built["cumulative"] = df.sort_values(["ts_code", "end_date"]).reset_index(
+            drop=True
+        )
+
+    single = _diff_to_single(df) if not df.empty else pd.DataFrame()
+    if "single" in desired and not single.empty:
+        built["single"] = single.sort_values(["ts_code", "end_date"]).reset_index(
+            drop=True
+        )
+
+    if "annual" in desired:
+        if annual_strategy == "cumulative":
+            annual = df[df["end_date"].str.endswith("1231")].copy()
+        else:
+            if single.empty:
+                annual = pd.DataFrame(columns=["ts_code", "end_date", *FLOW_FIELDS])
+            else:
+                sdf = single.copy()
+                sdf["year"] = sdf["end_date"].str[:4]
+                aggs = {c: "sum" for c in FLOW_FIELDS if c in sdf.columns}
+                annual = sdf.groupby(["ts_code", "year"], as_index=False).agg(aggs)
+                annual["end_date"] = annual["year"].astype(str) + "1231"
+                if set(["ann_date", "f_ann_date"]).issubset(df.columns):
+                    last_ann = (
+                        df[df["end_date"].str.endswith("1231")]
+                        .sort_values(["ts_code", "f_ann_date", "ann_date"])
+                        .groupby("ts_code", as_index=False)
+                        .tail(1)[["ts_code", "ann_date", "f_ann_date"]]
+                    )
+                    annual = annual.merge(last_ann, on="ts_code", how="left")
+                annual = annual.drop(
+                    columns=[
+                        c
+                        for c in annual.columns
+                        if c
+                        not in set(
+                            ["ts_code", "end_date", *FLOW_FIELDS, "ann_date", "f_ann_date"]
+                        )
+                    ]
+                )
+        if not annual.empty:
+            built["annual"] = annual.sort_values(["ts_code", "end_date"]).reset_index(
+                drop=True
+            )
+
+    return {k: v for k, v in built.items() if not v.empty}
 
 
 def _run_bulk_mode(

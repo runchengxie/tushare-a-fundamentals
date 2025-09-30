@@ -2,18 +2,25 @@ import argparse
 import os
 import sys
 from argparse import Namespace
+from pathlib import Path
+
+import pandas as pd
 
 from ..common import (
     DEFAULT_FIELDS,
     _check_parquet_dependency,
     _periods_from_cfg,
     _run_bulk_mode,
+    _export_tables,
+    _concat_non_empty,
     build_datasets_from_raw,
+    build_income_export_tables,
     eprint,
     init_pro_api,
     load_yaml,
     merge_config,
     normalize_fields,
+    ensure_ts_code,
     parse_report_types,
 )
 from ..downloader import (
@@ -105,11 +112,7 @@ def _build_export_args(cfg: dict, outdir: str, prefix: str) -> Namespace | None:
     if export_out_dir_cfg:
         export_out_dir = export_out_dir_cfg
     else:
-        normalized_outdir = os.path.normpath(outdir)
-        if os.path.basename(normalized_outdir) == export_out_format:
-            export_out_dir = normalized_outdir
-        else:
-            export_out_dir = os.path.join(outdir, export_out_format)
+        export_out_dir = os.path.normpath(outdir)
     export_kinds_cfg = cfg.get("export_kinds")
     if isinstance(export_kinds_cfg, (list, tuple, set)):
         export_kinds = ",".join(
@@ -144,6 +147,53 @@ def _run_export(export_args: Namespace, strict: bool | None) -> None:
         eprint(f"警告：导出失败（已保留 parquet）：{exc}")
         if strict:
             raise
+
+
+def _load_dataset_from_data_dir(data_dir: str, dataset: str) -> pd.DataFrame:
+    base = Path(data_dir) / dataset
+    if not base.exists():
+        return pd.DataFrame()
+    files = sorted(base.rglob("*.parquet"))
+    frames: list[pd.DataFrame] = []
+    for file in files:
+        try:
+            frames.append(pd.read_parquet(file))
+        except Exception as exc:  # pragma: no cover - defensive logging
+            eprint(f"警告：读取 {file} 失败：{exc}")
+    if not frames:
+        return pd.DataFrame()
+    combined = _concat_non_empty(frames)
+    if combined.empty:
+        return combined
+    return ensure_ts_code(combined, context=dataset)
+
+
+def _export_income_from_multi(cfg: dict, data_dir: str, requests) -> None:
+    if not cfg.get("export_enabled", True):
+        return
+    dataset_names = {req.name for req in requests}
+    if "income" not in dataset_names:
+        return
+    outdir = cfg.get("outdir") or "out"
+    prefix = cfg.get("prefix") or "income"
+    export_args = _build_export_args(cfg, outdir, prefix)
+    if export_args is None:
+        return
+    income_df = _load_dataset_from_data_dir(data_dir, "income")
+    if income_df.empty:
+        eprint("提示：income 数据为空，跳过自动导出")
+        return
+    kinds = [s.strip() for s in export_args.kinds.split(",") if s.strip()]
+    built = build_income_export_tables(
+        income_df,
+        years=export_args.years,
+        kinds=kinds,
+        annual_strategy=export_args.annual_strategy,
+    )
+    if not built:
+        eprint("提示：未生成可导出的 income 数据，跳过自动导出")
+        return
+    _export_tables(built, export_args.out_dir, export_args.prefix, export_args.out_format)
 
 
 def cmd_download(args: argparse.Namespace) -> None:
@@ -199,6 +249,7 @@ def cmd_download(args: argparse.Namespace) -> None:
             end=parse_yyyymmdd(end_raw),
             refresh_periods=int(cfg.get("recent_quarters") or 0),
         )
+        _export_income_from_multi(cfg, data_dir, dataset_requests)
         return
     raw_only = getattr(args, "raw_only", False)
     build_only = getattr(args, "build_only", False)
