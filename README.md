@@ -151,6 +151,8 @@ funda download --since 2010-01-01 --until 2019-12-31
 
 * `--export-kinds` / `--export-years` / `--export-annual-strategy`：微调年度/单季/季度累计导出口径与年份窗口；
 
+* 每次下载如遇失败 period/window，会在 `data/_state/failures/` 下生成对应 JSON 清单，方便后续优先补齐。
+
 * `--strict-export`：导出失败时返回非零状态码（默认仅记录警告并继续）。
 
 全量下载（建议）：

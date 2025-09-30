@@ -5,6 +5,7 @@ import pandas as pd
 import pytest
 
 from tushare_a_fundamentals.downloader import (
+    DATASET_SPECS,
     DatasetRequest,
     MarketDatasetDownloader,
     parse_dataset_requests,
@@ -118,3 +119,23 @@ def test_market_downloader_calendar(tmp_path, monkeypatch):
     assert pro.window_calls == [("20200101", "20200131"), ("20200201", "20200229")]
     state = json.loads(Path(state_path).read_text("utf-8"))
     assert state["dividend"]["last_date"] == "20200229"
+
+
+def test_failure_log_written_and_cleared(tmp_path):
+    pro = DummyPro()
+    dl = MarketDatasetDownloader(
+        pro,
+        data_dir=str(tmp_path),
+        use_vip=True,
+        max_per_minute=0,
+        state_path=str(tmp_path / "state.json"),
+    )
+    spec = DATASET_SPECS["income"]
+    entries = [{"combo": "report_type=1", "periods": ["20200101"]}]
+    dl._record_failures(spec, entries, "periods")
+    failure_path = tmp_path / "_state" / "failures" / "income_periods.json"
+    assert failure_path.exists()
+    data = json.loads(failure_path.read_text("utf-8"))
+    assert data["entries"] == entries
+    dl._record_failures(spec, [], "periods")
+    assert not failure_path.exists()

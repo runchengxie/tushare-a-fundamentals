@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import calendar
+import hashlib
 import json
 import os
 import shutil
+import threading
 import time
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from tempfile import TemporaryDirectory
 
@@ -366,18 +368,25 @@ class RateLimiter:
     def __init__(self, max_per_minute: int = 90) -> None:
         self.max_per_minute = max_per_minute
         self.calls: List[float] = []
+        self._lock = threading.Lock()
 
     def wait(self) -> None:
         if self.max_per_minute <= 0:
             return
-        now = time.time()
-        window_start = now - 60
-        self.calls = [t for t in self.calls if t >= window_start]
-        if len(self.calls) >= self.max_per_minute:
-            sleep_for = 60 - (now - self.calls[0]) + 0.1
-            if sleep_for > 0:
+        while True:
+            with self._lock:
+                now = time.time()
+                window_start = now - 60
+                self.calls = [t for t in self.calls if t >= window_start]
+                if len(self.calls) < self.max_per_minute:
+                    self.calls.append(now)
+                    return
+                sleep_for = 60 - (now - self.calls[0]) + 0.1
+            if sleep_for <= 0:
+                # Prevent busy wait if timestamps are virtually identical.
+                time.sleep(0.05)
+            else:
                 time.sleep(sleep_for)
-        self.calls.append(time.time())
 
 
 @dataclass(frozen=True)
@@ -571,6 +580,11 @@ class MarketDatasetDownloader:
                 year_col,
                 group_keys=spec.dedup_group_keys or spec.primary_keys,
             )
+        failure_entries = [
+            {"combo": desc, "periods": periods}
+            for desc, periods in failure_notes
+        ]
+        self._record_failures(spec, failure_entries, "periods")
         if write_ok:
             for dataset, key, value in pending_updates:
                 self.state.update(dataset, key, value)
@@ -618,6 +632,8 @@ class MarketDatasetDownloader:
                 year_col,
                 group_keys=spec.dedup_group_keys or spec.primary_keys,
             )
+        failure_entries = [{"window": win} for win in failed_windows]
+        self._record_failures(spec, failure_entries, "windows")
         if write_ok and last_completed is not None:
             self.state.update(spec.name, state_key, last_completed)
             if failed_windows:
@@ -795,6 +811,8 @@ class MarketDatasetDownloader:
             offset = 0
             pages = 0
             use_pagination = paginate
+            page_limit_hit = False
+            seen_signatures: Set[bytes] = set()
             while True:
                 call_params = params.copy()
                 if use_pagination or offset > 0:
@@ -808,14 +826,30 @@ class MarketDatasetDownloader:
                 df = func(**call_params)
                 if df is None or df.empty:
                     break
+                signature = hashlib.sha1(
+                    pd.util.hash_pandas_object(df, index=True).values.tobytes()
+                ).digest()
+                if signature in seen_signatures:
+                    print(
+                        "警告："
+                        f"调用 {api_name} 分页出现重复结果（offset={offset}），已提前终止"
+                    )
+                    break
+                seen_signatures.add(signature)
                 rows.append(df)
                 pages += 1
                 if len(df) < limit or pages >= MAX_PAGES:
+                    if pages >= MAX_PAGES:
+                        page_limit_hit = True
                     break
                 offset += limit
                 use_pagination = True
             if not rows:
                 return pd.DataFrame()
+            if page_limit_hit:
+                print(
+                    f"警告：调用 {api_name} 达到分页上限 {MAX_PAGES}，结果可能被截断"
+                )
             return _concat_non_empty(rows)
 
         try:
@@ -828,6 +862,33 @@ class MarketDatasetDownloader:
         except RetryExhaustedError as exc:
             print(f"警告：调用 {api_name} 失败：{exc.last_exception}")
             return None
+
+    def _record_failures(
+        self,
+        spec: DatasetSpec,
+        entries: Sequence[Dict[str, Any]],
+        kind: str,
+    ) -> None:
+        failure_root = Path(self.data_dir) / "_state" / "failures"
+        failure_path = failure_root / f"{spec.name}_{kind}.json"
+        if not entries:
+            if failure_path.exists():
+                try:
+                    failure_path.unlink()
+                except OSError:
+                    pass
+            return
+        ensure_dir(failure_root.as_posix())
+        payload = {
+            "dataset": spec.name,
+            "kind": kind,
+            "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "entries": entries,
+        }
+        failure_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            "utf-8",
+        )
 
     def _concat_and_dedup(
         self,
