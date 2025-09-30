@@ -8,7 +8,7 @@ import time
 from decimal import Decimal, InvalidOperation
 from dataclasses import dataclass
 from datetime import date
-from typing import Callable, Dict, List, Literal, Optional, Sequence, Set, Tuple, TypeVar
+from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Set, Tuple, TypeVar
 
 import pandas as pd
 import yaml
@@ -119,6 +119,22 @@ def merge_config(cli: dict, cfg: dict, defaults: dict) -> dict:
         if v is not None:
             merged[k] = v
     return merged
+
+
+def normalize_fields(value: Any) -> Optional[str]:
+    """Normalize a ``fields`` configuration value."""
+
+    if value is None:
+        return None
+    if isinstance(value, str):
+        trimmed = value.strip()
+        return trimmed or None
+    if isinstance(value, (list, tuple, set)):
+        items = [str(item).strip() for item in value if str(item).strip()]
+        if not items:
+            return None
+        return ",".join(items)
+    return None
 
 
 def parse_report_types(value) -> List[int]:
@@ -555,7 +571,7 @@ def fetch_income_bulk(
     pro,
     periods: List[str],
     mode: str,
-    fields: str,
+    fields: Optional[str],
     report_types: List[int] | None = None,
     period_report_pairs: Optional[Set[Tuple[str, int]]] = None,
     missing_detail: Optional[Dict[Tuple[str, int], Set[str]]] = None,
@@ -586,7 +602,10 @@ def fetch_income_bulk(
                 continue
             params = {"period": per, "report_type": rt}
             try:
-                call = partial(pro.income_vip, fields=fields, **params)
+                if fields:
+                    call = partial(pro.income_vip, fields=fields, **params)
+                else:
+                    call = partial(pro.income_vip, **params)
 
                 def _log_retry(attempt: int, exc: Exception, wait_seconds: float) -> None:
                     eprint(

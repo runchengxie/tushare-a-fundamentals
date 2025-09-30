@@ -8,6 +8,7 @@ from .common import (
     init_pro_api,
     load_yaml,
     merge_config,
+    normalize_fields,
     parse_report_types,
 )
 
@@ -272,6 +273,7 @@ def main() -> None:
     }
     cfg = merge_config(cli_overrides, cfg_file, defaults)
     cfg["report_types"] = parse_report_types(cfg.get("report_types"))
+    cfg["fields"] = normalize_fields(cfg.get("fields"))
     if getattr(args, "force", False):
         cfg["skip_existing"] = False
     pro = init_pro_api(cfg.get("token"))

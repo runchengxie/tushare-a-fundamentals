@@ -6,12 +6,14 @@ from argparse import Namespace
 from ..common import (
     DEFAULT_FIELDS,
     _check_parquet_dependency,
+    _periods_from_cfg,
     _run_bulk_mode,
     build_datasets_from_raw,
     eprint,
     init_pro_api,
     load_yaml,
     merge_config,
+    normalize_fields,
     parse_report_types,
 )
 from ..downloader import (
@@ -144,6 +146,7 @@ def cmd_download(args: argparse.Namespace) -> None:
     cli_overrides = _collect_cli_overrides(args)
     cfg = merge_config(cli_overrides, cfg_file, defaults)
     cfg["report_types"] = parse_report_types(cfg.get("report_types"))
+    cfg["fields"] = normalize_fields(cfg.get("fields"))
     try:
         max_retries = int(cfg.get("max_retries", 3))
     except (TypeError, ValueError):
@@ -166,6 +169,15 @@ def cmd_download(args: argparse.Namespace) -> None:
         max_per_minute = cfg.get("max_per_minute")
         if max_per_minute is None:
             max_per_minute = 90
+        start_raw = cfg.get("since")
+        end_raw = cfg.get("until")
+        if not start_raw or not end_raw:
+            periods_window = _periods_from_cfg(cfg)
+            if periods_window:
+                if not start_raw:
+                    start_raw = periods_window[0]
+                if not end_raw:
+                    end_raw = periods_window[-1]
         downloader = MarketDatasetDownloader(
             pro,
             data_dir,
@@ -177,8 +189,8 @@ def cmd_download(args: argparse.Namespace) -> None:
         )
         downloader.run(
             dataset_requests,
-            start=parse_yyyymmdd(cfg.get("since")),
-            end=parse_yyyymmdd(cfg.get("until")),
+            start=parse_yyyymmdd(start_raw),
+            end=parse_yyyymmdd(end_raw),
             refresh_periods=int(cfg.get("recent_quarters") or 0),
         )
         return
