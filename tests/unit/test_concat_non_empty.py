@@ -13,3 +13,11 @@ def test_concat_non_empty_filters_all_na():
         warnings.simplefilter("error")
         out = _concat_non_empty([df1, df2, df3])
     assert out.shape[0] == 2
+
+
+def test_concat_non_empty_preserves_schema_from_all_na():
+    df1 = pd.DataFrame({"a": [None], "b": [None]})
+    df2 = pd.DataFrame({"c": [None]})
+    out = _concat_non_empty([df1, df2])
+    assert list(out.columns) == ["a", "b", "c"]
+    assert out.empty

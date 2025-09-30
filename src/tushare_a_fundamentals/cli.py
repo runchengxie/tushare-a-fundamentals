@@ -22,6 +22,7 @@ def parse_cli() -> argparse.Namespace:
         type=int,
         help="近N季滚动刷新（默认 8）",
     )
+    p.add_argument("--max-retries", type=int, help="接口重试次数上限（默认 3）")
     vip_group = p.add_mutually_exclusive_group()
     vip_group.add_argument(
         "--vip", action="store_true", help="高级：显式启用 VIP（默认启用）"
@@ -93,6 +94,12 @@ def parse_cli() -> argparse.Namespace:
         "--recent-quarters",
         type=int,
         help="近N季滚动刷新（默认 8）",
+    )
+    sp_dl.add_argument(
+        "--max-retries",
+        dest="max_retries",
+        type=int,
+        help="接口重试次数上限（默认 3）",
     )
     sp_dl.add_argument(
         "--since", type=str, help="起始日期 YYYY-MM-DD（优先于 --years/--quarters）"

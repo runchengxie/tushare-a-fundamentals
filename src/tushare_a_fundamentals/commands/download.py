@@ -49,6 +49,7 @@ def _download_defaults() -> dict:
         "export_annual_strategy": "cumulative",
         "export_years": None,
         "export_strict": False,
+        "max_retries": 3,
     }
 
 
@@ -77,6 +78,7 @@ def _collect_cli_overrides(args: argparse.Namespace) -> dict:
         "export_annual_strategy": getattr(args, "export_annual_strategy", None),
         "export_years": getattr(args, "export_years", None),
         "export_strict": getattr(args, "export_strict", None),
+        "max_retries": getattr(args, "max_retries", None),
     }
     if getattr(args, "export_enabled", None) is not None:
         overrides["export_enabled"] = getattr(args, "export_enabled")
@@ -142,6 +144,13 @@ def cmd_download(args: argparse.Namespace) -> None:
     cli_overrides = _collect_cli_overrides(args)
     cfg = merge_config(cli_overrides, cfg_file, defaults)
     cfg["report_types"] = parse_report_types(cfg.get("report_types"))
+    try:
+        max_retries = int(cfg.get("max_retries", 3))
+    except (TypeError, ValueError):
+        max_retries = 3
+    if max_retries < 0:
+        max_retries = 0
+    cfg["max_retries"] = max_retries
     dataset_requests = parse_dataset_requests(cfg.get("datasets"))
     if dataset_requests:
         if getattr(args, "force", False):
@@ -164,6 +173,7 @@ def cmd_download(args: argparse.Namespace) -> None:
             max_per_minute=max_per_minute,
             state_path=cfg.get("state_path"),
             allow_future=bool(cfg.get("allow_future")),
+            max_retries=max_retries,
         )
         downloader.run(
             dataset_requests,

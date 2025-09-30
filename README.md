@@ -52,6 +52,7 @@ datasets:
 data_dir: data
 use_vip: true
 max_per_minute: 80
+max_retries: 3
 recent_quarters: 8  # 按季度回刷窗口
 ```
 
@@ -133,6 +134,8 @@ funda download --since 2010-01-01 --until 2019-12-31
 * `--report-types 1,6`：指定报表 `report_type`（逗号分隔），默认仅下载 `1`（合并报表）；
 
 * `--recent-quarters N`：滚动刷新最近 N 个季度（默认 8，设置为 0 可完全关闭刷新窗口）；
+
+* `--max-retries N`：接口异常时最多重试 N 次（默认 3，设为 0 表示只尝试一次）；
 
 * `--skip-existing`：仅补缺，不进行滚动刷新；
 

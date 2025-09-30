@@ -1,12 +1,14 @@
 import importlib
 import math
 import os
+import random
+from functools import partial
 import sys
 import time
 from decimal import Decimal, InvalidOperation
 from dataclasses import dataclass
 from datetime import date
-from typing import Dict, List, Literal, Optional, Sequence, Set, Tuple
+from typing import Callable, Dict, List, Literal, Optional, Sequence, Set, Tuple, TypeVar
 
 import pandas as pd
 import yaml
@@ -242,15 +244,123 @@ def last_publishable_period(today: date) -> str:
     return last
 
 
-def _retry_call(func, kwargs, max_tries=5, base_sleep=0.8):
-    for i in range(max_tries):
+T = TypeVar("T")
+
+_FATAL_EXCEPTION_TYPES: Tuple[type, ...] = (
+    AttributeError,
+    ValueError,
+    TypeError,
+)
+
+_FATAL_MESSAGE_KEYWORDS: Tuple[str, ...] = (
+    "permission",
+    "权限",
+    "无权限",
+    "token",
+    "denied",
+    "unauthorized",
+    "未授权",
+    "认证失败",
+    "参数错误",
+    "parameter error",
+    "invalid parameter",
+    "invalid token",
+    "missing token",
+    "missing parameter",
+)
+
+
+class RetryExhaustedError(RuntimeError):
+    """Raised when a retryable operation keeps failing beyond the limit."""
+
+    def __init__(self, description: str, last_exception: Exception) -> None:
+        super().__init__(description)
+        self.last_exception = last_exception
+
+
+@dataclass
+class RetryPolicy:
+    max_retries: int = 3
+    base_delay: float = 1.0
+    max_delay: float = 60.0
+    jitter: float = 0.2
+
+    def __post_init__(self) -> None:
+        if self.max_retries < 0:
+            self.max_retries = 0
+        if self.base_delay <= 0:
+            self.base_delay = 0.1
+        if self.max_delay < self.base_delay:
+            self.max_delay = self.base_delay
+        if self.jitter < 0:
+            self.jitter = 0.0
+
+    def is_retryable(self, exc: Exception) -> bool:
+        if isinstance(exc, _FATAL_EXCEPTION_TYPES):
+            return False
+        response = getattr(exc, "response", None)
+        status_code = getattr(response, "status_code", None)
+        if status_code is not None:
+            try:
+                code = int(status_code)
+            except (TypeError, ValueError):
+                code = None
+            if code is not None:
+                if code >= 500 or code == 429:
+                    return True
+                if 400 <= code < 500:
+                    return False
+        message = str(exc)
+        if not message:
+            return True
+        lowered = message.lower()
+        for keyword in _FATAL_MESSAGE_KEYWORDS:
+            if keyword in lowered:
+                return False
+        return True
+
+    def next_delay(self, retry_index: int) -> float:
+        base = min(self.base_delay * (2 ** retry_index), self.max_delay)
+        if self.jitter <= 0:
+            return base
+        low = base * max(0.0, 1 - self.jitter)
+        high = base * (1 + self.jitter)
+        if low == high:
+            return low
+        return random.uniform(low, high)
+
+
+def call_with_retry(
+    func: Callable[[], T],
+    *,
+    policy: Optional[RetryPolicy] = None,
+    description: Optional[str] = None,
+    on_retry: Optional[Callable[[int, Exception, float], None]] = None,
+    sleep_func: Callable[[float], None] = time.sleep,
+) -> T:
+    """Execute ``func`` with retry and exponential backoff."""
+
+    used_policy = policy or RetryPolicy()
+    retries = 0
+    while True:
         try:
-            return func(**kwargs)
-        except Exception:
-            if i == max_tries - 1:
+            return func()
+        except Exception as exc:  # pragma: no cover - error classification exercised in tests
+            if not used_policy.is_retryable(exc):
                 raise
-            time.sleep(base_sleep * (2**i))
-    return None
+            if retries >= used_policy.max_retries:
+                raise RetryExhaustedError(description or str(exc), exc) from exc
+            wait_seconds = used_policy.next_delay(retries)
+            retries += 1
+            if on_retry is not None:
+                on_retry(retries, exc, wait_seconds)
+            else:
+                label = description or "调用"
+                eprint(
+                    "警告："
+                    f"{label} 异常，{wait_seconds:.1f}s 后重试（第 {retries}/{used_policy.max_retries} 次）：{exc}"
+                )
+            sleep_func(wait_seconds)
 
 
 def _available_credits(pro) -> float | None:  # noqa: C901
@@ -327,10 +437,31 @@ def _has_enough_credits(pro, required: int = 5000) -> bool:
 
 def _concat_non_empty(dfs: List[pd.DataFrame]) -> pd.DataFrame:
     """Concatenate DataFrames after dropping empty or all-NA ones."""
-    non_empty = [df for df in dfs if not df.dropna(how="all").empty]
-    if not non_empty:
+    kept: List[pd.DataFrame] = []
+    seen_order: List[str] = []
+    seen_set: Set[str] = set()
+    for df in dfs:
+        if df is None:
+            continue
+        if not isinstance(df, pd.DataFrame):
+            continue
+        for col in df.columns:
+            if col not in seen_set:
+                seen_set.add(col)
+                seen_order.append(col)
+        if df.empty:
+            continue
+        if df.isna().to_numpy().all():
+            continue
+        kept.append(df)
+    if not kept:
+        if seen_order:
+            return pd.DataFrame(columns=seen_order)
         return pd.DataFrame()
-    return pd.concat(non_empty, ignore_index=True)
+    combined = pd.concat(kept, ignore_index=True)
+    if seen_order:
+        combined = combined.reindex(columns=seen_order)
+    return combined
 
 
 def _check_parquet_dependency() -> bool:
@@ -429,6 +560,7 @@ def fetch_income_bulk(
     period_report_pairs: Optional[Set[Tuple[str, int]]] = None,
     missing_detail: Optional[Dict[Tuple[str, int], Set[str]]] = None,
     refresh_pairs: Optional[Set[Tuple[str, int]]] = None,
+    retry_policy: Optional[RetryPolicy] = None,
     initial_load: bool = False,
 ) -> Dict[str, pd.DataFrame]:
     """Fetch multiple periods via ``income_vip`` for given report types."""
@@ -447,13 +579,35 @@ def fetch_income_bulk(
             (str(p), int(rt)): codes for (p, rt), codes in missing_detail.items()
         }
     future_limit = last_publishable_period(date.today())
+    policy = retry_policy or RetryPolicy()
     for per in periods:
         for rt in rts:
             if allowed_pairs is not None and (per, int(rt)) not in allowed_pairs:
                 continue
             params = {"period": per, "report_type": rt}
             try:
-                df = _retry_call(pro.income_vip, {"fields": fields, **params})
+                call = partial(pro.income_vip, fields=fields, **params)
+
+                def _log_retry(attempt: int, exc: Exception, wait_seconds: float) -> None:
+                    eprint(
+                        "警告："
+                        f"income_vip 期末 {per} report_type {rt} 异常，"
+                        f"{wait_seconds:.1f}s 后重试（第 {attempt}/{policy.max_retries} 次）：{exc}"
+                    )
+
+                df = call_with_retry(
+                    call,
+                    policy=policy,
+                    description=f"income_vip(period={per}, report_type={rt})",
+                    on_retry=_log_retry,
+                )
+            except RetryExhaustedError as exc:
+                last_exc = exc.last_exception
+                eprint(
+                    "警告："
+                    f"期末 {per} report_type {rt} 多次重试仍失败：{last_exc}"
+                )
+                continue
             except Exception as exc:
                 eprint(f"警告：期末 {per} report_type {rt} 拉取失败：{exc}")
                 continue
@@ -836,6 +990,14 @@ def _run_bulk_mode(
     base = f"{prefix}_vip_quarterly"
     report_types = cfg.get("report_types") or [1]
     recent_quarters = cfg.get("recent_quarters", 8) or 0
+    max_retries_cfg = cfg.get("max_retries")
+    try:
+        max_retries = int(max_retries_cfg)
+    except (TypeError, ValueError):
+        max_retries = RetryPolicy().max_retries
+    if max_retries < 0:
+        max_retries = 0
+    retry_policy = RetryPolicy(max_retries=max_retries)
     existing_raw = _load_existing_raw(outdir, base, fmt)
     planned_pairs, missing_pairs, missing_detail = _plan_period_report_pairs(
         existing_raw, periods, report_types, recent_quarters
@@ -862,6 +1024,7 @@ def _run_bulk_mode(
             period_report_pairs=fetch_pairs,
             missing_detail=missing_detail,
             refresh_pairs=refresh_pairs,
+            retry_policy=retry_policy,
             initial_load=existing_raw.empty,
         )
         new_raw = tables.get("raw", pd.DataFrame())

@@ -16,7 +16,13 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from .common import _concat_non_empty, last_publishable_period
+from .common import (
+    RetryExhaustedError,
+    RetryPolicy,
+    _concat_non_empty,
+    call_with_retry,
+    last_publishable_period,
+)
 from .transforms.deduplicate import mark_latest
 DATE_FMT = "%Y%m%d"
 MAX_PAGES = 200
@@ -460,7 +466,7 @@ class MarketDatasetDownloader:
         self.use_vip = use_vip
         self.limiter = RateLimiter(max_per_minute=max_per_minute)
         self.allow_future = allow_future
-        self.max_retries = max_retries
+        self.retry_policy = RetryPolicy(max_retries=max_retries)
         state_file = (
             Path(state_path)
             if state_path
@@ -764,58 +770,64 @@ class MarketDatasetDownloader:
     ) -> Optional[pd.DataFrame]:
         func = getattr(self.pro, api_name, None)
         if func is None:
+
             def fallback_call(**kwargs: Any) -> pd.DataFrame:
                 return self.pro.query(api_name, **kwargs)
 
             func = fallback_call
-        attempt = 0
-        while attempt <= self.max_retries:
+        policy = self.retry_policy
+
+        def _log_retry(attempt: int, exc: Exception, wait_seconds: float) -> None:
+            print(
+                f"警告：调用 {api_name} 异常，{wait_seconds:.1f}s 后重试"
+                f"（第 {attempt}/{policy.max_retries} 次）: {exc}"
+            )
+
+        def _invoke() -> pd.DataFrame:
+            limit_val = params.get("limit", 10000) or 10000
             try:
-                limit_val = params.get("limit", 10000) or 10000
-                try:
-                    limit = int(limit_val)
-                except (TypeError, ValueError):
-                    limit = 10000
-                if limit <= 0:
-                    limit = 10000
-                rows: List[pd.DataFrame] = []
-                offset = 0
-                pages = 0
-                use_pagination = paginate
-                while True:
-                    call_params = params.copy()
-                    if use_pagination or offset > 0:
-                        call_params["limit"] = limit
-                        call_params["offset"] = offset
-                    elif "limit" in call_params:
-                        call_params.setdefault("limit", limit)
-                    if fields:
-                        call_params.setdefault("fields", fields)
-                    self.limiter.wait()
-                    df = func(**call_params)
-                    if df is None or df.empty:
-                        break
-                    rows.append(df)
-                    pages += 1
-                    if len(df) < limit or pages >= MAX_PAGES:
-                        break
-                    offset += limit
-                    use_pagination = True
-                if not rows:
-                    return pd.DataFrame()
-                return _concat_non_empty(rows)
-            except Exception as exc:  # pragma: no cover - network failure
-                attempt += 1
-                if attempt > self.max_retries:
-                    print(f"警告：调用 {api_name} 失败：{exc}")
-                    return None
-                wait_time = min(2 ** (attempt - 1), 60)
-                print(
-                    f"警告：调用 {api_name} 异常，{wait_time:.0f}s 后重试"
-                    f"（第 {attempt}/{self.max_retries} 次）: {exc}"
-                )
-                time.sleep(wait_time)
-        return None
+                limit = int(limit_val)
+            except (TypeError, ValueError):
+                limit = 10000
+            if limit <= 0:
+                limit = 10000
+            rows: List[pd.DataFrame] = []
+            offset = 0
+            pages = 0
+            use_pagination = paginate
+            while True:
+                call_params = params.copy()
+                if use_pagination or offset > 0:
+                    call_params["limit"] = limit
+                    call_params["offset"] = offset
+                elif "limit" in call_params:
+                    call_params.setdefault("limit", limit)
+                if fields:
+                    call_params.setdefault("fields", fields)
+                self.limiter.wait()
+                df = func(**call_params)
+                if df is None or df.empty:
+                    break
+                rows.append(df)
+                pages += 1
+                if len(df) < limit or pages >= MAX_PAGES:
+                    break
+                offset += limit
+                use_pagination = True
+            if not rows:
+                return pd.DataFrame()
+            return _concat_non_empty(rows)
+
+        try:
+            return call_with_retry(
+                _invoke,
+                policy=policy,
+                description=f"调用 {api_name}",
+                on_retry=_log_retry,
+            )
+        except RetryExhaustedError as exc:
+            print(f"警告：调用 {api_name} 失败：{exc.last_exception}")
+            return None
 
     def _concat_and_dedup(
         self,

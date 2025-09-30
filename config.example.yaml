@@ -39,6 +39,7 @@ recent_quarters: 8
 # Only the VIP version of Tushare token supports batch download
 # use_vip: true       
 # max_per_minute: 90
+# max_retries: 3
 # state_path: null
 # Derived export controls (download -> parquet snapshot -> CSV export)
 export_enabled: true
