@@ -60,12 +60,12 @@ recent_quarters: 8  # 按季度回刷窗口
 
 ## 可选附加功能
 
-2. 检查缓存数据是否完整：`funda coverage`
+1. 检查缓存数据是否完整：`funda coverage`
 
-3. 在已经有缓存数据的情况下，重新导出 CSV 或改写格式：`funda export`
+2. 在已经有缓存数据的情况下，重新导出 CSV 或改写格式：`funda export`
 
-> ### 备注：
-> 
+> ### 备注
+>
 > 上述指令默认下载，检查，并导出近10年数据（即最近40个季度的季度累计合并报表数据，也就是tushare API的默认返回格式），但是必要时可通过指令的附加选项来微调行为，例如只下载近五年的数据（--year 5），或者近下载某个股票代码的数据（--ticker 600036.SH），或者通过更改config.yaml的设置
 
 ## 使用流程指南
@@ -74,19 +74,19 @@ recent_quarters: 8  # 按季度回刷窗口
 
 * `config.yml`（根目录）：CLI 行为（模式、时间范围、输出目录、字段选择等）。
 
-    * 初次使用：从模板复制一份并按需修改：`cp config.example.yaml config.yml`
+  * 初次使用：从模板复制一份并按需修改：`cp config.example.yaml config.yml`
 
 * `.env`（本地）：环境变量文件，至少包含 Tushare Token。
 
-    * 初次使用：从模板复制并填入 token：`cp .env.example .env`
+  * 初次使用：从模板复制并填入 token：`cp .env.example .env`
 
-    * 说明：程序会通过 python-dotenv 自动读取 `.env`，或从 shell 环境变量读取（变量名：`TUSHARE_TOKEN=<your_tushare_token>`）
+  * 说明：程序会通过 python-dotenv 自动读取 `.env`，或从 shell 环境变量读取（变量名：`TUSHARE_TOKEN=<your_tushare_token>`）
 
 * `.envrc`（本地，可选）：开发环境自动化脚本（需安装 direnv）。
 
-    * 初次使用：从模板复制并授权：`cp .envrc.example .envrc && direnv allow`
+  * 初次使用：从模板复制并授权：`cp .envrc.example .envrc && direnv allow`
 
-    * 说明：会自动加载 `.env`，监听关键文件变更，并创建/启用本地虚拟环境 `.venv`（优先使用 uv）。
+  * 说明：会自动加载 `.env`，监听关键文件变更，并创建/启用本地虚拟环境 `.venv`（优先使用 uv）。
 
 ### 安装
 
@@ -244,7 +244,6 @@ funda export --kinds annual,single,cumulative \\
 1. Tushare的三张报表实际上提供了12种不同的类型，本项目走的是tushare的默认版本，也就是合并报表，但是可以通过修改根目录的config.yaml，或者临时加入指令选项来改变该项目的下载行为，例如--report-types 6，意味着下载母公司报表类型
 
 2. 当系统检测到config.yaml指定的下载类型，和实际在项目缓存的数据类型（在out/parquet的已有数据类型）不符时，将做出提示，如用户确认将按config.yaml指定的下载类型进行下载，可通过附加指令选项来完成
-
 
 | 代码 | 类型                 | 说明                                             |
 | :--- | :------------------- | :----------------------------------------------- |
