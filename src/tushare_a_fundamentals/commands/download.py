@@ -101,9 +101,15 @@ def _build_export_args(cfg: dict, outdir: str, prefix: str) -> Namespace | None:
     if not cfg.get("export_enabled", True):
         return None
     export_out_format = (cfg.get("export_out_format") or "csv").lower()
-    export_out_dir = cfg.get("export_out_dir") or os.path.join(
-        outdir, export_out_format
-    )
+    export_out_dir_cfg = cfg.get("export_out_dir")
+    if export_out_dir_cfg:
+        export_out_dir = export_out_dir_cfg
+    else:
+        normalized_outdir = os.path.normpath(outdir)
+        if os.path.basename(normalized_outdir) == export_out_format:
+            export_out_dir = normalized_outdir
+        else:
+            export_out_dir = os.path.join(outdir, export_out_format)
     export_kinds_cfg = cfg.get("export_kinds")
     if isinstance(export_kinds_cfg, (list, tuple, set)):
         export_kinds = ",".join(

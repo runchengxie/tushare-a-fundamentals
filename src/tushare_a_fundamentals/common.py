@@ -92,25 +92,34 @@ def eprint(msg: str) -> None:
 
 
 def load_yaml(path: Optional[str]) -> dict:
-    candidate = path
-    if not candidate:
-        # 若未显式传入 --config，则尝试自动加载当前目录下的 config.yml（若存在）
-        default_path = os.path.join(os.getcwd(), "config.yml")
-        if os.path.exists(default_path):
-            candidate = default_path
-        else:
-            return {}
-    try:
-        with open(candidate, "r", encoding="utf-8") as f:
-            cfg = yaml.safe_load(f) or {}
-            print(f"已加载配置文件：{candidate}")
-            return cfg
-    except FileNotFoundError:
-        eprint(f"错误：未找到配置文件 {candidate}")
+    def _read(candidate: str) -> dict:
+        try:
+            with open(candidate, "r", encoding="utf-8") as f:
+                cfg = yaml.safe_load(f) or {}
+                print(f"已加载配置文件：{candidate}")
+                return cfg
+        except FileNotFoundError:
+            eprint(f"错误：未找到配置文件 {candidate}")
+            sys.exit(2)
+        except Exception as exc:
+            eprint(f"错误：读取配置文件失败：{exc}")
+            sys.exit(2)
+
+    if path:
+        return _read(path)
+
+    cwd = os.getcwd()
+    candidates = [
+        os.path.join(cwd, "config.yml"),
+        os.path.join(cwd, "config.yaml"),
+    ]
+    existing = [p for p in candidates if os.path.exists(p)]
+    if not existing:
+        return {}
+    if len(existing) > 1:
+        eprint("错误：检测到 config.yml 与 config.yaml 同时存在，请保留一个以保证唯一事实")
         sys.exit(2)
-    except Exception as exc:
-        eprint(f"错误：读取配置文件失败：{exc}")
-        sys.exit(2)
+    return _read(existing[0])
 
 
 def merge_config(cli: dict, cfg: dict, defaults: dict) -> dict:
@@ -453,31 +462,27 @@ def _has_enough_credits(pro, required: int = 5000) -> bool:
 
 def _concat_non_empty(dfs: List[pd.DataFrame]) -> pd.DataFrame:
     """Concatenate DataFrames after dropping empty or all-NA ones."""
+
     kept: List[pd.DataFrame] = []
     seen_order: List[str] = []
     seen_set: Set[str] = set()
     for df in dfs:
-        if df is None:
-            continue
-        if not isinstance(df, pd.DataFrame):
+        if df is None or not isinstance(df, pd.DataFrame):
             continue
         for col in df.columns:
             if col not in seen_set:
                 seen_set.add(col)
                 seen_order.append(col)
-        if df.empty:
+        if df.shape[0] == 0 or df.shape[1] == 0:
             continue
-        if df.isna().to_numpy().all():
+        if not df.notna().to_numpy().any():
             continue
-        kept.append(df)
+        kept.append(df.copy())
     if not kept:
-        if seen_order:
-            return pd.DataFrame(columns=seen_order)
-        return pd.DataFrame()
-    combined = pd.concat(kept, ignore_index=True)
+        return pd.DataFrame(columns=seen_order) if seen_order else pd.DataFrame()
     if seen_order:
-        combined = combined.reindex(columns=seen_order)
-    return combined
+        kept = [frame.reindex(columns=seen_order) for frame in kept]
+    return pd.concat(kept, ignore_index=True)
 
 
 def _check_parquet_dependency() -> bool:
