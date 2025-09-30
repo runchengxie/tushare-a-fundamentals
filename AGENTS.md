@@ -1,39 +1,34 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- `src/tushare_a_fundamentals/`: Library code and CLI (`cli.py`, entry script `funda`).
-- `tests/unit/`, `tests/integration/`: Pytest suites with markers in `pyproject.toml`.
-- `tools/`: Helper scripts (e.g., `tools/check_api_availability.py`).
-- Config: `config.example.yaml` (copy to local `config.yml`).
-- Root: `pyproject.toml`, `.env.example`, `.envrc.example`, `README.md`.
+- Library code and CLI live in `src/tushare_a_fundamentals/` (e.g., `cli.py`, `commands/download.py`, `downloader.py`).
+- Configuration templates sit at the repo root (`config.example.yaml`, `.env.example`, `.envrc.example`).
+- Tests are split into `tests/unit/` and `tests/integration/`; use markers defined in `pyproject.toml`.
+- Tools and scripts reside in `tools/`; data artifacts default to `out/` (legacy) or `data/` (multi-dataset mode).
 
 ## Build, Test, and Development Commands
-- Setup: `uv sync` (recommended) or `pip install -e .` (+ `pytest ruff pytest-cov`).
-- Prepare config: `cp config.example.yaml config.yml`.
-- Lint/format: `ruff check .`; `ruff format .`.
-- Tests: `pytest` (or `pytest -m unit`, `pytest -m integration`).
-- Run CLI: `funda download --help` or `python -m tushare_a_fundamentals.cli download --help`.
+- `uv sync` — install project and dev dependencies into `.venv`.
+- `pytest -m unit` / `pytest -m integration` — run targeted suites; use plain `pytest` before merging.
+- `ruff check .` and `ruff format .` — lint and auto-format the codebase.
+- `funda download --help` or `python -m tushare_a_fundamentals.cli download --help` — inspect CLI options.
 
 ## Coding Style & Naming Conventions
-- Python 3.10+; 4-space indent; max line length 88 (Black, Ruff).
-- Naming: `snake_case` (modules/functions/vars), `UPPER_SNAKE` (constants), `PascalCase` (classes).
-- Prefer type hints, small pure functions. User-facing messages in Chinese; code identifiers in English.
-- When adding CLI options or outputs, update `config.example.yaml` and `README.md`.
+- Python 3.10+ with 4-space indentation; keep lines ≤88 chars (Black/Ruff defaults).
+- Use snake_case for modules, functions, and variables; PascalCase for classes; UPPER_SNAKE_CASE for constants.
+- Add type hints for public functions; prefer small pure functions. CLI/user messages should be in Chinese, code identifiers in English.
+- Run Ruff before committing to ensure formatting parity.
 
 ## Testing Guidelines
-- Framework: Pytest with `unit` and `integration` markers.
-- Test files in `tests/` named `test_*.py`; avoid network in unit tests, mock TuShare.
-- Run `pytest -m unit` for quick checks; ensure full `pytest` passes before PRs.
+- Pytest is the test runner; name files `test_*.py` and apply `unit`/`integration` markers as appropriate.
+- Avoid network calls in unit tests—mock TuShare APIs; integration tests may hit the service when required.
+- Ensure new features include regression coverage; target existing helpers such as `DummyPro` for downloader tests.
 
 ## Commit & Pull Request Guidelines
-- Commits: imperative mood; optional scope prefixes (`feat:`, `fix:`, `docs:`, `refactor:`, `tests:`).
-- PRs: include description, linked issues, repro steps, and sample CLI commands/outputs; add tests and doc updates.
+- Write commits in imperative mood (optional scopes like `feat:`, `fix:`, `tests:`). Group related changes; avoid mixed commits.
+- Pull requests should summarize behavior, list linked issues, include repro steps, and capture relevant CLI outputs (e.g., `funda download` logs).
+- Before requesting review, run linting and the appropriate pytest markers; document any skipped tests or known limitations.
 
 ## Security & Configuration Tips
-- Never commit secrets. Set `TUSHARE_TOKEN` in `.env` (copy `.env.example`).
-- Use `direnv`: `cp .envrc.example .envrc && direnv allow` to auto-load `.env` and venv.
-- Keep `config.yml`, dataset paths, and generated outputs out of VCS (see `.gitignore`).
-
-## CLI Behavior Notes
-- Unified download: `funda download` defaults to incremental “补全”；use `--force` to overwrite.
-- Time window: `--since/--until` > `--quarters` > `--years` (default 10). Example: `funda download --since 2010-01-01`.
+- Never commit real TuShare tokens; use `.env`/`.envrc` with `TUSHARE_TOKEN` and let `direnv` manage loading.
+- Keep `config.yml` untracked (see `.gitignore`); copy from `config.example.yaml` and adjust locally.
+- Use multi-dataset state stored in `data/_state/state.json`; deleting it forces a full refresh.
