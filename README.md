@@ -41,7 +41,7 @@ funda download         # 批量调度下载，缓存，并导出CSV
 ```bash
 funda download --datasets income balancesheet cashflow forecast express \
   dividend fina_indicator fina_audit fina_mainbz disclosure_date \
-  --use-vip --data-dir data --since 2010-01-01
+  --vip --data-dir data --since 2010-01-01
 ```
 
 要长期保存增量游标，可在配置文件中启用：
@@ -81,7 +81,7 @@ recent_quarters: 8          # Re-fetches the most recent N quarters to pick up r
 
 > ### 备注
 >
-> 上述指令默认下载，检查，并导出近10年数据（即最近40个季度的季度累计合并报表数据，也就是tushare API的默认返回格式），但是必要时可通过指令的附加选项来微调行为，例如只下载近五年的数据（--year 5，代码会自动转化为最近可供下载的20个季度），也可直接指定想要下载的季度数，亦或者近下载某个股票代码的数据（--ticker 600036.SH），这些选择可以通过指令的选项或者更改config.yaml的设置方式来达成
+> 上述指令默认下载，检查，并导出近10年数据（即最近40个季度的季度累计合并报表数据，也就是tushare API的默认返回格式），但是必要时可通过指令的附加选项来微调行为，例如只下载近五年的数据（--year 5，代码会自动转化为最近可供下载的20个季度），也可直接指定想要下载的季度数，这些选择可以通过指令的选项或者更改config.yaml的设置方式来达成
 
 ## 使用流程指南
 
@@ -186,7 +186,7 @@ funda download --since 2010-01-01 --until 2019-12-31
 #### 数据完整性检测/可视化覆盖情况
 
 ```bash
-funda coverage --by ticker
+funda coverage
 ```
 
 默认会先输出覆盖率摘要，再按 `--by` 生成矩阵（数值约定：`1=覆盖`、`0=缺口`、`-1=豁免`）。追加 `--csv path/to/gaps.csv` 可导出缺口清单。数据集根目录默认为 `out`，可用 `--dataset-root` 指定，`--years` 可调整年份窗口（默认近 10 年）。
@@ -218,9 +218,17 @@ funda export --kinds annual,single,cumulative \\
 同样默认读取 `out` 目录下的数据集，并导出最近 10 年（若在 `download` 阶段未指定 `--export-years` 则默认沿用下载窗口）。若手动指定的窗口大于缓存中已有的季度范围，CLI 会提示并仅导出当前目录下已构建的数据。可通过 `--dataset-root`、`--years` 或 `--out-format` 参数微调。
 导出的结果统一使用 `ts_code` 作为证券主键，并按 `ts_code`、`end_date` 排序。
 
-## 开发约定
+## 状态管理
 
-* 状态管理（雏形，尚未接入 CLI）：`src/tushare_a_fundamentals/meta/state_store.py`
+`src/tushare_a_fundamentals/meta/state_store.py`
+
+一个极简的增量水位存储，加上失败清单记录，用来让下载可以**断点续跑、滚动回刷、失败可补**：
+
+* 把每个数据集的“最后成功 period/日期”写进 `data/_state/state.json`，下次从这个水位继续，而不是重抓全史。默认路径是 `<data_dir>/_state/state.json`，可用 `--state-path` 覆盖。 
+* period 型数据：按 `report_type` 和可选 `type` 组合生成独立的 state key（例如 `last_period:rt=1:type=P`），每个组合各自维护水位；抓取成功后批量更新对应 key。 
+* date 窗口型数据：以 `last_date` 记最后完成的月窗，继续滚动。
+* 失败 period/window 会被写入 `data/_state/failures/*.json`，下次可以优先补缺；成功则更新水位。
+* 这些 DataFrame 会先合并去重，保证仅保留每组的最新记录，再落地 parquet。
 
 ## 常见问题
 
@@ -231,8 +239,6 @@ funda export --kinds annual,single,cumulative \\
     ```
 
 * 字段漂移导致读失败？新增列应设为 nullable，读取时使用统一 schema 合并。
-
-* 历史 parquet 仍保留 `ticker` 列？运行 `python tools/migrate_ts_code_column.py --dry-run` 预览，确认后去掉 `--dry-run` 批量重命名为 `ts_code`。
 
 ## 参考Tushare API文档
 
