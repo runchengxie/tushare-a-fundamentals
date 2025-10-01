@@ -29,7 +29,6 @@
 ## 最小可行步骤
 
 ```bash
-cp config.example.yaml config.yml
 cp .env.example .env   # 填好 TUSHARE_TOKEN
 funda download         # 批量调度下载，缓存，并导出CSV
 ```
@@ -93,6 +92,7 @@ recent_quarters: 4          # Refresh the most recent quarters (建议 2-4 覆�
 * 默认状态后端：
 
   * JSON：若未显式指定，会将状态写入 `<data_dir>/_state/state.json`。多数据集模式下 `data_dir` 默认为 `data`。
+
   * SQLite：当仓库根目录存在 `meta/state.db` 时，`--backend auto` 会自动切换为 SQLite；也可手动通过 `--backend sqlite --state-path meta/state.db` 指定。
 
 * 自定义路径：任一后端均可通过 `--state-path` 覆盖默认位置。指定 `.db` 后缀时会强制使用 SQLite，其余文件视为 JSON。
@@ -110,6 +110,7 @@ recent_quarters: 4          # Refresh the most recent quarters (建议 2-4 覆�
 * `config.yml` 或 `config.yaml`（根目录）：CLI 行为（模式、时间范围、输出目录、字段选择等）。
 
   * 初次使用：从模板复制一份并按需修改：`cp config.example.yaml config.yml`
+
   * 若两者都存在，程序会拒绝继续并要求只保留一个；若均不存在，会打印提示并使用内建默认值。
 
 * `.env`（本地）：环境变量文件，至少包含 Tushare Token。
@@ -119,7 +120,9 @@ recent_quarters: 4          # Refresh the most recent quarters (建议 2-4 覆�
   * 说明：支持以下变量：
 
     * `TUSHARE_TOKEN`：主凭证，必填。
+
     * `TUSHARE_TOKEN_2`：如需配置第二个 TuShare 凭证以实现轮询调用，可选填。
+
     * `TUSHARE_API_KEY`：旧变量名。若设置且 `TUSHARE_TOKEN` 留空，会自动映射为主凭证。
 
   * 程序会通过 python-dotenv 自动读取 `.env`，或从 shell 环境变量读取（变量名同上）。
