@@ -68,7 +68,7 @@ data_dir: "data"
 use_vip: true               # Only the VIP version of Tushare token supports batch download
 max_per_minute: 90
 max_retries: 3
-recent_quarters: 8          # Re-fetches the most recent N quarters to pick up revisions
+recent_quarters: 4          # Refresh the most recent quarters (建议 2-4 覆盖常见改期)
 ```
 
 运行后输出位于 `data/<dataset>/year=YYYY/part-*.parquet`，增量状态写入 `data/_state/state.json`，默认滚动补齐最近 `recent_quarters` 个季度并继续增量下载。

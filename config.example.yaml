@@ -10,8 +10,8 @@ years: 10
 
 
 # --- Data refresh ---
-# recent_quarters controls the rolling refresh window: re-fetches the most recent N quarters to pick up revisions. # Set recent_quarters to 0 to disable this behavior; skip_existing: true skips the refresh entirely (only fetch missing combos).
-recent_quarters: 8
+# recent_quarters controls the rolling refresh window: re-fetches the most recent N quarters to pick up revisions. A setting of 2-4 is recommended to cover common rescheduling scenarios. Set to 0 to disable the re-fetch feature. If skip_existing is true, it will completely skip any partitions that already exist.
+recent_quarters: 4
 # The 'download' subcommand defaults to patch missing periods plus a rolling refresh window.
 skip_existing: false
 

@@ -1110,7 +1110,7 @@ def _run_bulk_mode(
     periods = _periods_from_cfg(cfg)
     base = f"{prefix}_vip_quarterly"
     report_types = cfg.get("report_types") or [1]
-    recent_quarters = cfg.get("recent_quarters", 8) or 0
+    recent_quarters = cfg.get("recent_quarters", 4) or 0
     max_retries_cfg = cfg.get("max_retries")
     try:
         max_retries = int(max_retries_cfg)

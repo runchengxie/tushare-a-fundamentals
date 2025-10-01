@@ -45,7 +45,7 @@ def _download_defaults() -> dict:
         "token": None,
         "report_types": [1],
         "allow_future": False,
-        "recent_quarters": 8,
+        "recent_quarters": 4,
         "datasets": None,
         "data_dir": "data",
         "use_vip": True,

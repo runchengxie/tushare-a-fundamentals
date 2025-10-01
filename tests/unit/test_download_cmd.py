@@ -66,4 +66,4 @@ def test_cmd_download_multi_dataset_uses_configured_years(monkeypatch):
     assert len(captured["start"]) == 8
     assert len(captured["end"]) == 8
     assert captured["start"] <= captured["end"]
-    assert captured["refresh"] == 8
+    assert captured["refresh"] == 4

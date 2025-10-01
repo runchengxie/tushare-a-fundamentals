@@ -281,7 +281,7 @@ def main() -> None:
         "prefix": "income",
         "format": "parquet",
         "skip_existing": False,
-        "recent_quarters": 8,
+        "recent_quarters": 4,
         "token": None,
         "report_types": [1],
     }
