@@ -9,18 +9,18 @@ import pandas as pd
 from ..common import (
     DEFAULT_FIELDS,
     _check_parquet_dependency,
+    _concat_non_empty,
+    _export_tables,
     _periods_from_cfg,
     _run_bulk_mode,
-    _export_tables,
-    _concat_non_empty,
     build_datasets_from_raw,
     build_income_export_tables,
+    ensure_ts_code,
     eprint,
     init_pro_api,
     load_yaml,
     merge_config,
     normalize_fields,
-    ensure_ts_code,
     parse_report_types,
 )
 from ..downloader import (

@@ -2,9 +2,9 @@ import argparse
 import sys
 
 from ..common import (
-    build_income_export_tables,
     _export_tables,
     _load_dataset,
+    build_income_export_tables,
     ensure_ts_code,
     eprint,
 )

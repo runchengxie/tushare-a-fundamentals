@@ -138,11 +138,16 @@ def load_yaml(path: Optional[str]) -> dict:
     return _read(existing[0])
 
 
-def merge_config(cli: dict, cfg: dict, defaults: dict) -> dict:
-    merged = {**defaults, **cfg}
-    for k, v in cli.items():
-        if v is not None:
-            merged[k] = v
+def merge_config(cli: dict | None, cfg: dict | None, defaults: dict | None) -> dict:
+    merged: dict = {**(defaults or {}), **(cfg or {})}
+    if not cli:
+        return merged
+    for key, value in cli.items():
+        if value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        merged[key] = value
     return merged
 
 
