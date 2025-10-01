@@ -28,9 +28,6 @@ def parse_cli() -> argparse.Namespace:
     vip_group.add_argument(
         "--vip", action="store_true", help="高级：显式启用 VIP（默认启用）"
     )
-    vip_group.add_argument(
-        "--no-vip", action="store_true", help="高级：禁用 VIP（已废弃）"
-    )
     p.add_argument("--fields", type=str)
     p.add_argument("--outdir", type=str)
     p.add_argument("--prefix", type=str)
@@ -173,12 +170,6 @@ def parse_cli() -> argparse.Namespace:
         dest="use_vip",
         action="store_true",
         help="优先使用 VIP 接口",
-    )
-    vip_toggle.add_argument(
-        "--no-vip",
-        dest="use_vip",
-        action="store_false",
-        help="禁用 VIP 接口",
     )
     sp_dl.add_argument(
         "--state-path",

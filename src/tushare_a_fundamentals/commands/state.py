@@ -3,13 +3,10 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from typing import Any, Dict, Iterable
-
-import sqlite3
+from typing import Iterable
 
 from ..common import eprint
-from ..downloader import JsonState
-from ..meta.state_store import init_state_store
+from ..state_backend import JsonStateBackend, SQLiteStateBackend, StateBackend
 
 _DEFAULT_JSON_RELATIVE = Path("_state") / "state.json"
 _DEFAULT_SQLITE_PATH = Path("meta") / "state.db"
@@ -46,142 +43,6 @@ def _resolve_backend_and_path(args: argparse.Namespace) -> tuple[str, Path]:
     return backend, state_path_arg  # type: ignore[return-value]
 
 
-def _load_json_state(path: Path) -> JsonState:
-    return JsonState(path)
-
-
-def _ensure_parent(path: Path) -> None:
-    if path.parent and not path.parent.exists():
-        path.parent.mkdir(parents=True, exist_ok=True)
-
-
-def _show_json_state(state: JsonState, dataset: str | None) -> Dict[str, Any]:
-    if dataset:
-        return state.data.get(dataset, {})
-    return state.data
-
-
-def _show_sqlite_state(path: Path, dataset: str | None) -> Dict[str, Any]:
-    if not path.exists():
-        return {}
-    conn = sqlite3.connect(path.as_posix())
-    try:
-        cur = conn.cursor()
-        payload: Dict[str, Any] = {}
-        if dataset:
-            cur.execute(
-                "SELECT dataset, low, high FROM watermarks WHERE dataset=?", (dataset,)
-            )
-            payload["watermarks"] = [dict(zip(["dataset", "low", "high"], row)) for row in cur.fetchall()]
-            cur.execute(
-                "SELECT dataset, part_year, min_key, max_key, last_checked_at, last_success_at, dirty "
-                "FROM dataset_state WHERE dataset=? ORDER BY part_year",
-                (dataset,),
-            )
-            payload["dataset_state"] = [
-                dict(
-                    zip(
-                        [
-                            "dataset",
-                            "part_year",
-                            "min_key",
-                            "max_key",
-                            "last_checked_at",
-                            "last_success_at",
-                            "dirty",
-                        ],
-                        row,
-                    )
-                )
-                for row in cur.fetchall()
-            ]
-        else:
-            cur.execute("SELECT dataset, low, high FROM watermarks ORDER BY dataset")
-            payload["watermarks"] = [dict(zip(["dataset", "low", "high"], row)) for row in cur.fetchall()]
-            cur.execute(
-                "SELECT dataset, part_year, min_key, max_key, last_checked_at, last_success_at, dirty "
-                "FROM dataset_state ORDER BY dataset, part_year"
-            )
-            payload["dataset_state"] = [
-                dict(
-                    zip(
-                        [
-                            "dataset",
-                            "part_year",
-                            "min_key",
-                            "max_key",
-                            "last_checked_at",
-                            "last_success_at",
-                            "dirty",
-                        ],
-                        row,
-                    )
-                )
-                for row in cur.fetchall()
-            ]
-        return payload
-    finally:
-        conn.close()
-
-
-def _clear_json_state(state: JsonState, dataset: str | None, key: str | None) -> None:
-    if dataset is None:
-        eprint("错误：清理 JSON 状态时必须指定 --dataset")
-        return
-    bucket = state.data.get(dataset)
-    if not bucket:
-        eprint(f"提示：未找到数据集 {dataset} 的状态")
-        return
-    if key:
-        if key in bucket:
-            del bucket[key]
-            if not bucket:
-                del state.data[dataset]
-        else:
-            eprint(f"提示：数据集 {dataset} 下不存在键 {key}")
-            return
-    else:
-        del state.data[dataset]
-    _ensure_parent(state.path)
-    state.path.write_text(json.dumps(state.data, ensure_ascii=False, indent=2), "utf-8")
-    print(f"已清理 JSON 状态：dataset={dataset}{', key='+key if key else ''}")
-
-
-def _set_json_state(state: JsonState, dataset: str | None, key: str | None, value: str | None) -> None:
-    if not dataset or not key or value is None:
-        eprint("错误：设置 JSON 状态时必须提供 --dataset、--key、--value")
-        return
-    bucket = state.data.setdefault(dataset, {})
-    bucket[key] = value
-    _ensure_parent(state.path)
-    state.path.write_text(json.dumps(state.data, ensure_ascii=False, indent=2), "utf-8")
-    print(f"已更新 JSON 状态：{dataset}.{key} = {value}")
-
-
-def _clear_sqlite_state(path: Path, dataset: str | None, year: int | None) -> None:
-    if dataset is None:
-        eprint("错误：清理 SQLite 状态时必须指定 --dataset")
-        return
-    conn = init_state_store(path)
-    try:
-        cur = conn.cursor()
-        if year is not None:
-            cur.execute(
-                "DELETE FROM dataset_state WHERE dataset=? AND part_year=?",
-                (dataset, year),
-            )
-        else:
-            cur.execute("DELETE FROM dataset_state WHERE dataset=?", (dataset,))
-        cur.execute("DELETE FROM watermarks WHERE dataset=?", (dataset,))
-        conn.commit()
-        print(
-            f"已清理 SQLite 状态：dataset={dataset}"
-            f"{', year='+str(year) if year is not None else ''}"
-        )
-    finally:
-        conn.close()
-
-
 def _ls_failures(data_dir: Path) -> None:
     root = data_dir / "_state" / "failures"
     if not root.exists():
@@ -209,27 +70,39 @@ def cmd_state(args: argparse.Namespace) -> None:
         _ls_failures(data_dir)
         return
 
+    backend_impl: StateBackend
     if backend == "json":
-        state = _load_json_state(state_path)
-        if args.action == "show":
-            result = _show_json_state(state, args.dataset)
-            print(json.dumps(result, ensure_ascii=False, indent=2))
-        elif args.action == "clear":
-            _clear_json_state(state, args.dataset, args.key)
-        elif args.action == "set":
-            _set_json_state(state, args.dataset, args.key, args.value)
-        else:
-            eprint(f"错误：JSON 后端不支持操作 {args.action}")
-    else:  # sqlite
-        if args.action == "show":
-            result = _show_sqlite_state(state_path, args.dataset)
-            print(json.dumps(result, ensure_ascii=False, indent=2))
-        elif args.action == "clear":
-            _clear_sqlite_state(state_path, args.dataset, args.year)
-        elif args.action == "set":
-            eprint("错误：SQLite 后端暂不支持 set 操作")
-        else:
-            eprint(f"错误：未识别的操作 {args.action}")
+        backend_impl = JsonStateBackend(state_path)
+    else:
+        backend_impl = SQLiteStateBackend(state_path)
+
+    if args.action == "show":
+        result = backend_impl.snapshot(args.dataset)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return
+
+    if args.action == "clear":
+        if not args.dataset:
+            eprint("错误：清理状态时必须指定 --dataset")
+            return
+        backend_impl.delete(args.dataset, args.key, year=args.year)
+        target = [f"dataset={args.dataset}"]
+        if args.key:
+            target.append(f"key={args.key}")
+        if args.year is not None:
+            target.append(f"year={args.year}")
+        print(f"已清理状态：{', '.join(target)}")
+        return
+
+    if args.action == "set":
+        if not args.dataset or not args.key or args.value is None:
+            eprint("错误：设置状态时必须提供 --dataset、--key、--value")
+            return
+        backend_impl.set(args.dataset, args.key, args.value)
+        print(f"已更新状态：{args.dataset}.{args.key} = {args.value}")
+        return
+
+    eprint(f"错误：未识别的操作 {args.action}")
 
 
 def register_state_subparser(subparsers: argparse._SubParsersAction) -> None:

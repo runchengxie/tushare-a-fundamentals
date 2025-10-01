@@ -176,7 +176,7 @@ funda download --since 2010-01-01 --until 2019-12-31
 
 * `--data-dir DIR`：多数据集输出目录（默认 `data`）。状态与失败列表亦存储在该目录下的 `_state/`。
 
-* `--use-vip` / `--no-vip`：显式启用/禁用 VIP 接口，默认启用；`--max-per-minute N` 控制限速窗口（默认 90）。
+* `--use-vip`：显式启用 VIP 接口（默认启用）；`--max-per-minute N` 控制限速窗口（默认 90）。如需禁用 VIP，可在配置文件中设置 `use_vip: false`。
 
 * `--report-types 1,6`：指定报表 `report_type`（逗号或空格分隔），默认仅下载 `1`（合并报表）。
 

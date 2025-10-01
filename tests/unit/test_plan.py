@@ -9,17 +9,12 @@ def test_plan_mapping():
     p = plan_from_mode("annual")
     assert p.periodicity == "annual"
 
-    p = plan_from_mode("quarter")
-    assert p.periodicity == "quarterly"
-
 
 def test_plan_override():
     p = plan_from_mode("annual", periodicity="quarterly")
     assert p.periodicity == "quarterly"
 
 
-def test_plan_deprecated_alias(capfd):
-    p = plan_from_mode("quarter")
-    assert p.periodicity == "quarterly"
-    err = capfd.readouterr().err
-    assert "已弃用" in err
+def test_plan_rejects_quarter_alias():
+    with pytest.raises(ValueError):
+        plan_from_mode("quarter")

@@ -32,6 +32,15 @@ CREATE TABLE IF NOT EXISTS watermarks (
 );
 """
 
+KV_STATE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS kv_state (
+  dataset TEXT NOT NULL,
+  state_key TEXT NOT NULL,
+  state_value TEXT,
+  PRIMARY KEY (dataset, state_key)
+);
+"""
+
 
 def init_state_store(path: str | Path) -> Connection:
     """Initialise a SQLite-backed state store.
@@ -49,8 +58,57 @@ def init_state_store(path: str | Path) -> Connection:
     cur = conn.cursor()
     cur.execute(DATASET_STATE_SCHEMA)
     cur.execute(WATERMARKS_SCHEMA)
+    cur.execute(KV_STATE_SCHEMA)
     conn.commit()
     return conn
+
+
+def upsert_kv_state(
+    conn: Connection, dataset: str, key: str, value: str
+) -> None:
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO kv_state(dataset, state_key, state_value)
+        VALUES (?, ?, ?)
+        ON CONFLICT(dataset, state_key) DO UPDATE SET
+            state_value=excluded.state_value
+        """,
+        (dataset, key, value),
+    )
+    conn.commit()
+
+
+def delete_kv_state(
+    conn: Connection, dataset: str, key: str | None = None
+) -> None:
+    cur = conn.cursor()
+    if key is None:
+        cur.execute("DELETE FROM kv_state WHERE dataset=?", (dataset,))
+    else:
+        cur.execute(
+            "DELETE FROM kv_state WHERE dataset=? AND state_key=?",
+            (dataset, key),
+        )
+    conn.commit()
+
+
+def fetch_all_kv_state(
+    conn: Connection, dataset: str | None = None
+) -> list[tuple[str, str, str]]:
+    cur = conn.cursor()
+    if dataset is None:
+        cur.execute(
+            "SELECT dataset, state_key, state_value FROM kv_state"
+            " ORDER BY dataset, state_key"
+        )
+    else:
+        cur.execute(
+            "SELECT dataset, state_key, state_value FROM kv_state"
+            " WHERE dataset=? ORDER BY state_key",
+            (dataset,),
+        )
+    return cur.fetchall()
 
 
 @dataclass(eq=True, frozen=True)

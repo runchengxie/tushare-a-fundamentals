@@ -24,6 +24,7 @@ from .common import (
     ensure_ts_code,
     last_publishable_period,
 )
+from .state_backend import JsonStateBackend, StateBackend
 from .transforms.deduplicate import mark_latest
 
 DATE_FMT = "%Y%m%d"
@@ -425,27 +426,16 @@ class PeriodFetchOutcome:
     failed_periods: List[str] = field(default_factory=list)
 
 
-class JsonState:
-    def __init__(self, path: Path) -> None:
-        self.path = path
-        self.data: Dict[str, Dict[str, Any]] = {}
-        if path.exists():
-            try:
-                self.data = json.loads(path.read_text("utf-8"))
-            except json.JSONDecodeError:
-                self.data = {}
+@dataclass
+class DownloadAccumulator:
+    frames: List[pd.DataFrame] = field(default_factory=list)
+    updates: List[Tuple[str, str, str]] = field(default_factory=list)
+    failures: List[Any] = field(default_factory=list)
 
-    def get(self, dataset: str, key: str, default: str) -> str:
-        return str(self.data.get(dataset, {}).get(key, default))
-
-    def update(self, dataset: str, key: str, value: str) -> None:
-        bucket = self.data.setdefault(dataset, {})
-        bucket[key] = value
-        ensure_dir(self.path.parent.as_posix())
-        self.path.write_text(
-            json.dumps(self.data, ensure_ascii=False, indent=2),
-            "utf-8",
-        )
+    def merge(self, other: "DownloadAccumulator") -> None:
+        self.frames.extend(other.frames)
+        self.updates.extend(other.updates)
+        self.failures.extend(other.failures)
 
 
 @dataclass
@@ -463,6 +453,7 @@ class MarketDatasetDownloader:
         use_vip: bool = True,
         max_per_minute: int = 90,
         state_path: Optional[str] = None,
+        state_backend: StateBackend | None = None,
         allow_future: bool = False,
         max_retries: int = 3,
     ) -> None:
@@ -477,7 +468,7 @@ class MarketDatasetDownloader:
             if state_path
             else Path(data_dir) / "_state" / "state.json"
         )
-        self.state = JsonState(state_file)
+        self.state = state_backend or JsonStateBackend(state_file)
 
     def run(
         self,
@@ -541,7 +532,7 @@ class MarketDatasetDownloader:
         if spec.date_field is not None:
             self._download_calendar(spec, options, start_date, end_date)
 
-    def _download_periodic(  # noqa: C901
+    def _download_periodic(
         self,
         spec: DatasetSpec,
         options: Dict[str, Any],
@@ -553,59 +544,44 @@ class MarketDatasetDownloader:
         type_values = self._resolve_type_values(spec, options)
         combinations = self._build_period_combinations(report_types, type_values)
         method_name, paginate = self._resolve_method(spec)
-        collected: List[pd.DataFrame] = []
-        pending_updates: List[Tuple[str, str, str]] = []
-        failure_notes: List[Tuple[str, List[str]]] = []
         period_end = self._bounded_period_end(end_date)
+
+        accumulator = DownloadAccumulator()
         for combo in combinations:
-            state_key = combo.state_key("last_period", spec)
-            last_period = self.state.get(spec.name, state_key, spec.default_start)
-            effective_start = start_date or last_period or spec.default_start
-            effective_start = max(effective_start, spec.default_start)
-            if refresh_periods and last_period:
-                backfill_start = move_quarters(last_period, -max(refresh_periods, 0))
-                if backfill_start < effective_start:
-                    effective_start = max(backfill_start, spec.default_start)
-            if effective_start > period_end:
-                continue
-            periods = quarter_periods(effective_start, period_end)
-            if not periods:
-                continue
-            outcome = self._collect_periods(spec, periods, combo, method_name, paginate)
-            collected.extend(outcome.frames)
-            if outcome.last_successful_period is not None:
-                pending_updates.append(
-                    (spec.name, state_key, outcome.last_successful_period)
-                )
-            if outcome.failed_periods:
-                failure_notes.append((combo.describe(spec), outcome.failed_periods))
-        combined = self._concat_and_dedup(collected, spec)
+            combo_result = self._run_periodic_combo(
+                spec,
+                combo,
+                start_date,
+                period_end,
+                refresh_periods,
+                method_name,
+                paginate,
+            )
+            accumulator.merge(combo_result)
+
+        combined = self._concat_and_dedup(accumulator.frames, spec)
         write_ok = True
         if combined is not None:
-            year_col = spec.default_year_column
             write_ok = write_parquet_dataset(
                 combined,
                 self.data_dir,
                 spec.name,
-                year_col,
+                spec.default_year_column,
                 group_keys=spec.dedup_group_keys or spec.primary_keys,
             )
         failure_entries = [
             {"combo": desc, "periods": periods}
-            for desc, periods in failure_notes
+            for desc, periods in accumulator.failures
         ]
         self._record_failures(spec, failure_entries, "periods")
         if write_ok:
-            for dataset, key, value in pending_updates:
-                self.state.update(dataset, key, value)
-            if failure_notes:
-                for desc, periods in failure_notes:
-                    failed = ", ".join(periods)
-                    print(
-                        f"提示：{spec.name} {desc} 未成功的 period: {failed}"
-                    )
+            for dataset, key, value in accumulator.updates:
+                self.state.set(dataset, key, value)
+            for desc, periods in accumulator.failures:
+                failed = ", ".join(periods)
+                print(f"提示：{spec.name} {desc} 未成功的 period: {failed}")
 
-    def _download_per_stock(  # noqa: C901
+    def _download_per_stock(
         self,
         spec: DatasetSpec,
         options: Dict[str, Any],
@@ -624,113 +600,26 @@ class MarketDatasetDownloader:
         combinations = self._build_period_combinations(report_types, type_values)
         method_name, paginate = self._resolve_method(spec)
         period_end = self._bounded_period_end(end_date)
-        collected: List[pd.DataFrame] = []
-        pending_updates: List[Tuple[str, str, str]] = []
-        failure_entries: List[Dict[str, Any]] = []
+        accumulator = DownloadAccumulator()
         for _, row in stock_df.iterrows():
-            ts_code = str(row["ts_code"]).strip()
+            ts_code = str(row.get("ts_code", "")).strip()
             if not ts_code:
                 continue
             earliest_period = self._normalize_period(row.get("earliest_period"))
-            for combo in combinations:
-                state_key = combo.state_key(
-                    f"last_period:ts={ts_code}", spec
-                )
-                default_start = earliest_period or spec.default_start
-                last_period = self.state.get(
-                    spec.name, state_key, default_start
-                )
-                effective_start = (
-                    start_date or last_period or default_start
-                )
-                effective_start = self._normalize_period(effective_start)
-                effective_start = self._max_period(
-                    effective_start, spec.default_start
-                )
-                if earliest_period:
-                    effective_start = self._max_period(
-                        effective_start, earliest_period
-                    )
-                if refresh_periods and last_period:
-                    backfill_start = move_quarters(
-                        last_period, -max(refresh_periods, 0)
-                    )
-                    backfill_start = self._normalize_period(backfill_start)
-                    backfill_start = self._max_period(
-                        backfill_start, spec.default_start
-                    )
-                    if earliest_period:
-                        backfill_start = self._max_period(
-                            backfill_start, earliest_period
-                        )
-                    if backfill_start is not None:
-                        if start_date is None:
-                            effective_start = backfill_start
-                        elif (
-                            effective_start is not None
-                            and backfill_start < effective_start
-                        ):
-                            effective_start = backfill_start
-                if effective_start is None:
-                    effective_start = spec.default_start
-                if effective_start > period_end:
-                    continue
-                periods = quarter_periods(effective_start, period_end)
-                if not periods:
-                    continue
-                last_success: Optional[str] = None
-                failed_periods: List[str] = []
-                for period_value in periods:
-                    params = dict(spec.extra_params)
-                    params[spec.period_field] = period_value
-                    params[spec.code_param] = ts_code
-                    params.update(combo.as_params(spec))
-                    df = self._call_api(
-                        method_name,
-                        params,
-                        spec.fields,
-                        paginate=paginate,
-                    )
-                    if df is None:
-                        failed_periods.append(period_value)
-                        combo_desc = combo.describe(spec)
-                        print(
-                            "警告："
-                            f"{spec.name} {combo_desc} 针对 {ts_code} "
-                            f"在 {period_value} 抓取失败，请稍后手动排查"
-                        )
-                        continue
-                    last_success = period_value
-                    if df.empty:
-                        continue
-                    frame = df.copy()
-                    if spec.code_param not in frame.columns:
-                        frame[spec.code_param] = ts_code
-                    if (
-                        spec.type_param
-                        and spec.type_param not in frame.columns
-                        and combo.type_value is not None
-                    ):
-                        frame[spec.type_param] = combo.type_value
-                    if (
-                        combo.report_type is not None
-                        and "report_type" not in frame.columns
-                    ):
-                        frame["report_type"] = combo.report_type
-                    collected.append(frame)
-                if last_success is not None:
-                    pending_updates.append(
-                        (spec.name, state_key, last_success)
-                    )
-                if failed_periods:
-                    failure_entries.append(
-                        {
-                            "ts_code": ts_code,
-                            "combo": combo.describe(spec),
-                            "periods": failed_periods,
-                        }
-                    )
-        combined = self._concat_and_dedup(collected, spec)
+            stock_result = self._run_stock_download(
+                spec,
+                combinations,
+                ts_code,
+                earliest_period,
+                start_date,
+                period_end,
+                refresh_periods,
+                method_name,
+                paginate,
+            )
+            accumulator.merge(stock_result)
+
+        combined = self._concat_and_dedup(accumulator.frames, spec)
         write_ok = True
         if combined is not None:
             write_ok = write_parquet_dataset(
@@ -740,16 +629,205 @@ class MarketDatasetDownloader:
                 spec.default_year_column,
                 group_keys=spec.dedup_group_keys or spec.primary_keys,
             )
-        self._record_failures(spec, failure_entries, "per_stock")
+        self._record_failures(spec, accumulator.failures, "per_stock")
         if write_ok:
-            for dataset, key, value in pending_updates:
-                self.state.update(dataset, key, value)
-            for entry in failure_entries:
+            for dataset, key, value in accumulator.updates:
+                self.state.set(dataset, key, value)
+            for entry in accumulator.failures:
                 periods = ", ".join(entry["periods"])
                 print(
                     "提示："
                     f"{spec.name} {entry['ts_code']} 未成功的 period: {periods}"
                 )
+
+    def _run_periodic_combo(
+        self,
+        spec: DatasetSpec,
+        combo: PeriodCombination,
+        start_date: Optional[str],
+        period_end: str,
+        refresh_periods: int,
+        method_name: str,
+        paginate: bool,
+    ) -> DownloadAccumulator:
+        result = DownloadAccumulator()
+        state_key = combo.state_key("last_period", spec)
+        last_period = self.state.get(spec.name, state_key, spec.default_start)
+        effective_start = self._resolve_periodic_start(
+            spec,
+            start_date,
+            last_period,
+            refresh_periods,
+        )
+        if effective_start is None or effective_start > period_end:
+            return result
+        periods = quarter_periods(effective_start, period_end)
+        if not periods:
+            return result
+        outcome = self._collect_periods(spec, periods, combo, method_name, paginate)
+        result.frames.extend(outcome.frames)
+        if outcome.last_successful_period is not None:
+            result.updates.append(
+                (spec.name, state_key, outcome.last_successful_period)
+            )
+        if outcome.failed_periods:
+            result.failures.append((combo.describe(spec), outcome.failed_periods))
+        return result
+
+    def _run_stock_download(
+        self,
+        spec: DatasetSpec,
+        combinations: Sequence[PeriodCombination],
+        ts_code: str,
+        earliest_period: Optional[str],
+        start_date: Optional[str],
+        period_end: str,
+        refresh_periods: int,
+        method_name: str,
+        paginate: bool,
+    ) -> DownloadAccumulator:
+        result = DownloadAccumulator()
+        for combo in combinations:
+            combo_result = self._run_stock_combo(
+                spec,
+                combo,
+                ts_code,
+                earliest_period,
+                start_date,
+                period_end,
+                refresh_periods,
+                method_name,
+                paginate,
+            )
+            result.merge(combo_result)
+        return result
+
+    def _run_stock_combo(
+        self,
+        spec: DatasetSpec,
+        combo: PeriodCombination,
+        ts_code: str,
+        earliest_period: Optional[str],
+        start_date: Optional[str],
+        period_end: str,
+        refresh_periods: int,
+        method_name: str,
+        paginate: bool,
+    ) -> DownloadAccumulator:
+        result = DownloadAccumulator()
+        state_key = combo.state_key(f"last_period:ts={ts_code}", spec)
+        default_start = earliest_period or spec.default_start
+        last_period = self.state.get(spec.name, state_key, default_start)
+        effective_start = self._resolve_periodic_start(
+            spec,
+            start_date,
+            last_period,
+            refresh_periods,
+            lower_bound=earliest_period,
+        )
+        if effective_start is None or effective_start > period_end:
+            return result
+        periods = quarter_periods(effective_start, period_end)
+        if not periods:
+            return result
+
+        combo_desc = combo.describe(spec)
+        failed_periods: List[str] = []
+        last_success: Optional[str] = None
+        for period_value in periods:
+            frame, success = self._call_stock_period(
+                spec,
+                method_name,
+                paginate,
+                combo,
+                ts_code,
+                period_value,
+            )
+            if not success:
+                failed_periods.append(period_value)
+                print(
+                    "警告："
+                    f"{spec.name} {combo_desc} 针对 {ts_code} "
+                    f"在 {period_value} 抓取失败，请稍后手动排查"
+                )
+                continue
+            last_success = period_value
+            if frame is not None and not frame.empty:
+                result.frames.append(frame)
+        if last_success is not None:
+            result.updates.append((spec.name, state_key, last_success))
+        if failed_periods:
+            result.failures.append(
+                {
+                    "ts_code": ts_code,
+                    "combo": combo_desc,
+                    "periods": failed_periods,
+                }
+            )
+        return result
+
+    def _call_stock_period(
+        self,
+        spec: DatasetSpec,
+        method_name: str,
+        paginate: bool,
+        combo: PeriodCombination,
+        ts_code: str,
+        period_value: str,
+    ) -> Tuple[Optional[pd.DataFrame], bool]:
+        params = dict(spec.extra_params)
+        params[spec.period_field] = period_value
+        params[spec.code_param] = ts_code
+        params.update(combo.as_params(spec))
+        df = self._call_api(
+            method_name,
+            params,
+            spec.fields,
+            paginate=paginate,
+        )
+        if df is None:
+            return None, False
+        if df.empty:
+            return df, True
+        frame = df.copy()
+        if spec.code_param not in frame.columns:
+            frame[spec.code_param] = ts_code
+        if (
+            spec.type_param
+            and spec.type_param not in frame.columns
+            and combo.type_value is not None
+        ):
+            frame[spec.type_param] = combo.type_value
+        if combo.report_type is not None and "report_type" not in frame.columns:
+            frame["report_type"] = combo.report_type
+        return frame, True
+
+    def _resolve_periodic_start(
+        self,
+        spec: DatasetSpec,
+        start_override: Optional[str],
+        last_period: Optional[str],
+        refresh_periods: int,
+        *,
+        lower_bound: Optional[str] = None,
+    ) -> Optional[str]:
+        candidate = start_override or last_period or spec.default_start
+        candidate = self._normalize_period(candidate)
+        candidate = self._max_period(candidate, spec.default_start)
+        if lower_bound:
+            candidate = self._max_period(candidate, lower_bound)
+        backfill: Optional[str] = None
+        if refresh_periods and last_period:
+            backfill = move_quarters(last_period, -max(refresh_periods, 0))
+            backfill = self._normalize_period(backfill)
+            backfill = self._max_period(backfill, spec.default_start)
+            if lower_bound:
+                backfill = self._max_period(backfill, lower_bound)
+        if backfill is not None and (
+            start_override is None or (candidate is not None and backfill < candidate)
+        ):
+            candidate = backfill
+        return candidate
 
     def _download_calendar(
         self,
@@ -791,7 +869,7 @@ class MarketDatasetDownloader:
         failure_entries = [{"window": win} for win in failed_windows]
         self._record_failures(spec, failure_entries, "windows")
         if write_ok and last_completed is not None:
-            self.state.update(spec.name, state_key, last_completed)
+            self.state.set(spec.name, state_key, last_completed)
             if failed_windows:
                 print(
                     "提示："

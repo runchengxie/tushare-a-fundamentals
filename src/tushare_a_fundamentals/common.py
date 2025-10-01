@@ -2,13 +2,24 @@ import importlib
 import math
 import os
 import random
-from functools import partial
 import sys
 import time
-from decimal import Decimal, InvalidOperation
 from dataclasses import dataclass
 from datetime import date
-from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Set, Tuple, TypeVar
+from decimal import Decimal, InvalidOperation
+from functools import partial
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    Literal,
+    Optional,
+    Sequence,
+    Set,
+    Tuple,
+    TypeVar,
+)
 
 import pandas as pd
 import yaml
@@ -56,7 +67,6 @@ PERIOD_NODES = ["0331", "0630", "0930", "1231"]
 
 class Mode:
     ANNUAL = "annual"
-    QUARTER = "quarter"
     # legacy aliases
     SEMIANNUAL = "semiannual"
     QUARTERLY = "quarterly"
@@ -70,7 +80,6 @@ class Plan:
 MODE_MAP = {
     Mode.ANNUAL: Plan("annual"),
     Mode.QUARTERLY: Plan("quarterly"),
-    Mode.QUARTER: Plan("quarterly"),
 }
 
 
@@ -81,9 +90,12 @@ _GLOBAL_TOKEN: Optional[str] = None
 
 def plan_from_mode(mode: str, periodicity: str | None = None) -> Plan:
     m = mode.lower()
-    if m == Mode.QUARTER:
-        eprint("警告：'quarter' 模式已弃用，请使用 'quarterly'")
-    p = MODE_MAP[m]
+    if m == "quarter":
+        raise ValueError("'quarter' 模式已移除，请改用 'quarterly'")
+    try:
+        p = MODE_MAP[m]
+    except KeyError as exc:
+        raise ValueError(f"未知 mode：{mode}") from exc
     return Plan(periodicity or p.periodicity)
 
 
@@ -484,10 +496,10 @@ def _concat_non_empty(dfs: List[pd.DataFrame]) -> pd.DataFrame:
             continue
         if not df.notna().to_numpy().any():
             continue
-        kept.append(df.copy())
+        kept.append(df)
     if not kept:
         return pd.DataFrame(columns=seen_order) if seen_order else pd.DataFrame()
-    combined = pd.concat(kept, ignore_index=True)
+    combined = pd.concat(kept, ignore_index=True, copy=False)
     if seen_order:
         combined = combined.loc[:, [col for col in seen_order if col in combined.columns]]
     return combined

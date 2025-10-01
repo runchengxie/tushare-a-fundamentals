@@ -1,6 +1,5 @@
 import json
 from argparse import Namespace
-from pathlib import Path
 
 import pytest
 
@@ -73,3 +72,27 @@ def test_state_ls_failures(tmp_path, capsys):
     captured = capsys.readouterr()
     assert "income_periods.json" in captured.out
     assert "1 条记录" in captured.out
+
+
+def test_state_set_sqlite(tmp_path, capsys):
+    db_path = tmp_path / "state.db"
+    args_set = make_args(
+        action="set",
+        backend="sqlite",
+        state_path=str(db_path),
+        dataset="income",
+        key="last_period",
+        value="20231231",
+    )
+    state_cmd.cmd_state(args_set)
+    capsys.readouterr()
+
+    args_show = make_args(
+        action="show",
+        backend="sqlite",
+        state_path=str(db_path),
+    )
+    state_cmd.cmd_state(args_show)
+    captured = capsys.readouterr()
+    assert "kv_state" in captured.out
+    assert "20231231" in captured.out
