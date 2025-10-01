@@ -18,6 +18,7 @@ class DummyPro:
     def __init__(self):
         self.period_calls: list[str] = []
         self.window_calls: list[tuple[str, str]] = []
+        self.audit_calls: list[tuple[str, str]] = []
 
     def income_vip(self, **kwargs):
         period = kwargs.get("period")
@@ -41,6 +42,17 @@ class DummyPro:
                 "record_date": [None],
                 "ex_date": [None],
                 "imp_ann_date": [None],
+            }
+        )
+
+    def fina_audit(self, **kwargs):
+        ts_code = kwargs.get("ts_code")
+        period = kwargs.get("period")
+        self.audit_calls.append((ts_code, period))
+        return pd.DataFrame(
+            {
+                "end_date": [period],
+                "audit_opinion": ["标准无保留意见"],
             }
         )
 
@@ -120,6 +132,50 @@ def test_market_downloader_calendar(tmp_path, monkeypatch):
     state = json.loads(Path(state_path).read_text("utf-8"))
     assert state["dividend"]["last_date"] == "20200229"
 
+
+def test_market_downloader_per_stock(tmp_path, monkeypatch):
+    pro = DummyPro()
+    saved: list[tuple[str, pd.DataFrame]] = []
+
+    def fake_write(df, root, dataset, year_col, *, group_keys=None):
+        saved.append((dataset, df.copy()))
+        return True
+
+    monkeypatch.setattr(
+        "tushare_a_fundamentals.downloader.write_parquet_dataset", fake_write
+    )
+    state_path = tmp_path / "state.json"
+    dl = MarketDatasetDownloader(
+        pro,
+        data_dir=str(tmp_path),
+        use_vip=False,
+        max_per_minute=0,
+        state_path=str(state_path),
+    )
+    req = DatasetRequest(
+        name="fina_audit",
+        options={"ts_codes": ["000001.SZ", "000002.SZ"]},
+    )
+    dl.run([req], start="2020-01-01", end="2020-12-31")
+    assert pro.audit_calls == [
+        ("000001.SZ", "20200331"),
+        ("000001.SZ", "20200630"),
+        ("000001.SZ", "20200930"),
+        ("000001.SZ", "20201231"),
+        ("000002.SZ", "20200331"),
+        ("000002.SZ", "20200630"),
+        ("000002.SZ", "20200930"),
+        ("000002.SZ", "20201231"),
+    ]
+    assert saved
+    dataset, df = saved[0]
+    assert dataset == "fina_audit"
+    assert set(df["ts_code"].unique()) == {"000001.SZ", "000002.SZ"}
+    state = json.loads(Path(state_path).read_text("utf-8"))
+    bucket = state["fina_audit"]
+    assert "last_period" not in bucket
+    assert bucket["last_period:ts=000001.SZ"] == "20201231"
+    assert bucket["last_period:ts=000002.SZ"] == "20201231"
 
 def test_failure_log_written_and_cleared(tmp_path):
     pro = DummyPro()

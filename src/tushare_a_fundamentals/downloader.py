@@ -3,16 +3,14 @@ from __future__ import annotations
 import calendar
 import hashlib
 import json
-import os
 import shutil
 import threading
 import time
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
-
 from tempfile import TemporaryDirectory
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 import pandas as pd
 import pyarrow as pa
@@ -23,9 +21,11 @@ from .common import (
     RetryPolicy,
     _concat_non_empty,
     call_with_retry,
+    ensure_ts_code,
     last_publishable_period,
 )
 from .transforms.deduplicate import mark_latest
+
 DATE_FMT = "%Y%m%d"
 MAX_PAGES = 200
 
@@ -50,6 +50,8 @@ class DatasetSpec:
     vip_supports_pagination: bool = False
     api_supports_pagination: bool = True
     extra_params: Dict[str, Any] = field(default_factory=dict)
+    requires_ts_code: bool = False
+    code_param: str = "ts_code"
 
 
 DATASET_SPECS: Dict[str, DatasetSpec] = {
@@ -160,6 +162,8 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         default_year_column="end_date",
         fields=None,
         api_supports_pagination=True,
+        requires_ts_code=True,
+        code_param="ts_code",
     ),
     "fina_mainbz": DatasetSpec(
         name="fina_mainbz",
@@ -273,7 +277,7 @@ def ensure_dir(path: str) -> None:
     Path(path).mkdir(parents=True, exist_ok=True)
 
 
-def write_parquet_dataset(
+def write_parquet_dataset(  # noqa: C901
     df: pd.DataFrame,
     root: str,
     dataset: str,
@@ -490,6 +494,11 @@ class MarketDatasetDownloader:
         for req in requests:
             spec = self._spec_for(req.name)
             print(f"[{datetime.now()}] >>> 抓取 {spec.name}")
+            if spec.requires_ts_code:
+                print(
+                    "提示："
+                    f"{spec.name} 仅支持按股票循环，本次将枚举 ts_code"
+                )
             self._download_dataset(
                 spec,
                 req.options,
@@ -512,6 +521,15 @@ class MarketDatasetDownloader:
         end_date: str,
         refresh_periods: int,
     ) -> None:
+        if spec.requires_ts_code:
+            self._download_per_stock(
+                spec,
+                options,
+                start_date,
+                end_date,
+                refresh_periods,
+            )
+            return
         if spec.period_field is not None:
             self._download_periodic(
                 spec,
@@ -523,7 +541,7 @@ class MarketDatasetDownloader:
         if spec.date_field is not None:
             self._download_calendar(spec, options, start_date, end_date)
 
-    def _download_periodic(
+    def _download_periodic(  # noqa: C901
         self,
         spec: DatasetSpec,
         options: Dict[str, Any],
@@ -586,6 +604,152 @@ class MarketDatasetDownloader:
                     print(
                         f"提示：{spec.name} {desc} 未成功的 period: {failed}"
                     )
+
+    def _download_per_stock(  # noqa: C901
+        self,
+        spec: DatasetSpec,
+        options: Dict[str, Any],
+        start_date: Optional[str],
+        end_date: str,
+        refresh_periods: int,
+    ) -> None:
+        if spec.period_field is None:
+            raise ValueError(f"{spec.name} 缺少 period_field，无法按股票抓取")
+        stock_df = self._resolve_stock_universe(options)
+        if stock_df.empty:
+            print(f"警告：{spec.name} 未找到可用股票清单，已跳过")
+            return
+        report_types = self._resolve_report_types(spec, options)
+        type_values = self._resolve_type_values(spec, options)
+        combinations = self._build_period_combinations(report_types, type_values)
+        method_name, paginate = self._resolve_method(spec)
+        period_end = self._bounded_period_end(end_date)
+        collected: List[pd.DataFrame] = []
+        pending_updates: List[Tuple[str, str, str]] = []
+        failure_entries: List[Dict[str, Any]] = []
+        for _, row in stock_df.iterrows():
+            ts_code = str(row["ts_code"]).strip()
+            if not ts_code:
+                continue
+            earliest_period = self._normalize_period(row.get("earliest_period"))
+            for combo in combinations:
+                state_key = combo.state_key(
+                    f"last_period:ts={ts_code}", spec
+                )
+                default_start = earliest_period or spec.default_start
+                last_period = self.state.get(
+                    spec.name, state_key, default_start
+                )
+                effective_start = (
+                    start_date or last_period or default_start
+                )
+                effective_start = self._normalize_period(effective_start)
+                effective_start = self._max_period(
+                    effective_start, spec.default_start
+                )
+                if earliest_period:
+                    effective_start = self._max_period(
+                        effective_start, earliest_period
+                    )
+                if refresh_periods and last_period:
+                    backfill_start = move_quarters(
+                        last_period, -max(refresh_periods, 0)
+                    )
+                    backfill_start = self._normalize_period(backfill_start)
+                    backfill_start = self._max_period(
+                        backfill_start, spec.default_start
+                    )
+                    if earliest_period:
+                        backfill_start = self._max_period(
+                            backfill_start, earliest_period
+                        )
+                    if backfill_start is not None:
+                        if start_date is None:
+                            effective_start = backfill_start
+                        elif (
+                            effective_start is not None
+                            and backfill_start < effective_start
+                        ):
+                            effective_start = backfill_start
+                if effective_start is None:
+                    effective_start = spec.default_start
+                if effective_start > period_end:
+                    continue
+                periods = quarter_periods(effective_start, period_end)
+                if not periods:
+                    continue
+                last_success: Optional[str] = None
+                failed_periods: List[str] = []
+                for period_value in periods:
+                    params = dict(spec.extra_params)
+                    params[spec.period_field] = period_value
+                    params[spec.code_param] = ts_code
+                    params.update(combo.as_params(spec))
+                    df = self._call_api(
+                        method_name,
+                        params,
+                        spec.fields,
+                        paginate=paginate,
+                    )
+                    if df is None:
+                        failed_periods.append(period_value)
+                        combo_desc = combo.describe(spec)
+                        print(
+                            "警告："
+                            f"{spec.name} {combo_desc} 针对 {ts_code} "
+                            f"在 {period_value} 抓取失败，请稍后手动排查"
+                        )
+                        continue
+                    last_success = period_value
+                    if df.empty:
+                        continue
+                    frame = df.copy()
+                    if spec.code_param not in frame.columns:
+                        frame[spec.code_param] = ts_code
+                    if (
+                        spec.type_param
+                        and spec.type_param not in frame.columns
+                        and combo.type_value is not None
+                    ):
+                        frame[spec.type_param] = combo.type_value
+                    if (
+                        combo.report_type is not None
+                        and "report_type" not in frame.columns
+                    ):
+                        frame["report_type"] = combo.report_type
+                    collected.append(frame)
+                if last_success is not None:
+                    pending_updates.append(
+                        (spec.name, state_key, last_success)
+                    )
+                if failed_periods:
+                    failure_entries.append(
+                        {
+                            "ts_code": ts_code,
+                            "combo": combo.describe(spec),
+                            "periods": failed_periods,
+                        }
+                    )
+        combined = self._concat_and_dedup(collected, spec)
+        write_ok = True
+        if combined is not None:
+            write_ok = write_parquet_dataset(
+                combined,
+                self.data_dir,
+                spec.name,
+                spec.default_year_column,
+                group_keys=spec.dedup_group_keys or spec.primary_keys,
+            )
+        self._record_failures(spec, failure_entries, "per_stock")
+        if write_ok:
+            for dataset, key, value in pending_updates:
+                self.state.update(dataset, key, value)
+            for entry in failure_entries:
+                periods = ", ".join(entry["periods"])
+                print(
+                    "提示："
+                    f"{spec.name} {entry['ts_code']} 未成功的 period: {periods}"
+                )
 
     def _download_calendar(
         self,
@@ -663,6 +827,116 @@ class MarketDatasetDownloader:
         if spec.type_values:
             return list(spec.type_values)
         return []
+
+    def _resolve_stock_universe(self, options: Dict[str, Any]) -> pd.DataFrame:
+        explicit = self._normalize_code_list(options.get("ts_codes"))
+        if explicit:
+            return pd.DataFrame({"ts_code": explicit})
+        inferred = self._load_codes_from_fact()
+        if inferred is not None:
+            return inferred
+        fallback = self._load_codes_from_stock_basic()
+        if fallback is not None:
+            return fallback
+        return pd.DataFrame(columns=["ts_code", "earliest_period"])
+
+    def _normalize_code_list(self, raw: Any) -> List[str]:
+        if raw is None:
+            return []
+        items: List[str]
+        if isinstance(raw, str):
+            candidates = raw.replace("\n", ",").split(",")
+            items = [c.strip() for c in candidates if c.strip()]
+        elif isinstance(raw, Sequence) and not isinstance(raw, (bytes, bytearray)):
+            items = [str(c).strip() for c in raw if str(c).strip()]
+        else:
+            items = [str(raw).strip()]
+        seen: Set[str] = set()
+        unique: List[str] = []
+        for item in items:
+            if item and item not in seen:
+                seen.add(item)
+                unique.append(item)
+        return unique
+
+    def _load_codes_from_fact(self) -> Optional[pd.DataFrame]:
+        root = Path(self.data_dir) / "dataset=fact_income_cum"
+        if not root.exists():
+            return None
+        frames: List[pd.DataFrame] = []
+        for file in sorted(root.rglob("*.parquet")):
+            try:
+                frames.append(
+                    pd.read_parquet(file, columns=["ts_code", "end_date"])
+                )
+            except Exception as exc:  # pragma: no cover - defensive I/O
+                print(f"警告：读取 {file} 失败：{exc}")
+        if not frames:
+            return None
+        combined = _concat_non_empty(frames)
+        if combined.empty:
+            return None
+        combined = ensure_ts_code(combined, context="fact_income_cum")
+        combined["end_date"] = combined["end_date"].astype(str)
+        grouped = combined.groupby("ts_code")["end_date"].min().reset_index()
+        grouped = grouped.rename(columns={"end_date": "earliest_period"})
+        return grouped
+
+    def _load_codes_from_stock_basic(self) -> Optional[pd.DataFrame]:
+        params = {"list_status": "L"}
+        df = self._call_api(
+            "stock_basic",
+            params,
+            fields="ts_code,list_date",
+            paginate=True,
+        )
+        if df is None or df.empty:
+            return None
+        frame = df.copy()
+        frame["ts_code"] = frame["ts_code"].astype(str)
+        if "list_date" in frame.columns:
+            frame["earliest_period"] = frame["list_date"].apply(
+                self._list_date_to_period
+            )
+        else:
+            frame["earliest_period"] = None
+        return frame[["ts_code", "earliest_period"]]
+
+    def _normalize_period(self, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        if len(text) == 10 and text[4] == "-" and text[7] == "-":
+            text = text.replace("-", "")
+        if len(text) != 8:
+            return None
+        return text
+
+    def _max_period(
+        self, value: Optional[str], floor: Optional[str]
+    ) -> Optional[str]:
+        if value is None:
+            return floor
+        if floor is None:
+            return value
+        return max(value, floor)
+
+    def _list_date_to_period(self, raw: Any) -> Optional[str]:
+        if raw is None:
+            return None
+        text = str(raw).strip()
+        if not text:
+            return None
+        normalized = self._normalize_period(text)
+        if normalized is None:
+            return None
+        try:
+            day = datetime.strptime(normalized, DATE_FMT).date()
+        except ValueError:
+            return None
+        return quarter_end_for(day).strftime(DATE_FMT)
 
     def _build_period_combinations(
         self,
@@ -768,7 +1042,7 @@ class MarketDatasetDownloader:
         )
         return df
 
-    def _call_api(
+    def _call_api(  # noqa: C901
         self,
         api_name: str,
         params: Dict[str, Any],
@@ -791,7 +1065,7 @@ class MarketDatasetDownloader:
                 f"（第 {attempt}/{policy.max_retries} 次）: {exc}"
             )
 
-        def _invoke() -> pd.DataFrame:
+        def _invoke() -> pd.DataFrame:  # noqa: C901
             limit_val = params.get("limit", 10000) or 10000
             try:
                 limit = int(limit_val)
