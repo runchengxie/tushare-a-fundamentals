@@ -485,13 +485,13 @@ def _concat_non_empty(dfs: List[pd.DataFrame]) -> pd.DataFrame:
     for df in dfs:
         if df is None or not isinstance(df, pd.DataFrame):
             continue
-        df = df.dropna(axis=1, how="all")
-        if df.shape[1] == 0:
-            continue
         for col in df.columns:
             if col not in seen_set:
                 seen_set.add(col)
                 seen_order.append(col)
+        df = df.dropna(axis=1, how="all")
+        if df.shape[1] == 0:
+            continue
         if df.shape[0] == 0:
             continue
         if not df.notna().to_numpy().any():
