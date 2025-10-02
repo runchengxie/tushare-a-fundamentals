@@ -600,6 +600,20 @@ def _has_enough_credits(pro, required: int = 5000) -> bool:
     return 0 <= (required_d - total_d) <= Decimal("0.001")
 
 
+def ensure_enough_credits(pro, required: int = 5000) -> None:
+    """Exit with an error message when available credits are insufficient."""
+
+    if _has_enough_credits(pro, required=required):
+        return
+    total = _available_credits(pro)
+    detected = "0" if total is None else repr(total)
+    eprint(
+        "错误：全市场批量需要至少 "
+        f"{required} 积分。（检测到总积分：{detected}）"
+    )
+    sys.exit(2)
+
+
 def _concat_non_empty(dfs: List[pd.DataFrame]) -> pd.DataFrame:
     """Concatenate DataFrames after dropping empty or all-NA ones."""
 
@@ -1240,11 +1254,7 @@ def build_income_export_tables(
 def _run_bulk_mode(
     pro, cfg: dict, fields: str, fmt: str, outdir: str, prefix: str
 ) -> None:
-    if not _has_enough_credits(pro):
-        total = _available_credits(pro)
-        detected = "0" if total is None else repr(total)
-        eprint(f"错误：全市场批量需要至少 5000 积分。（检测到总积分：{detected}）")
-        sys.exit(2)
+    ensure_enough_credits(pro)
     periods = _periods_from_cfg(cfg)
     base = f"{prefix}_vip_quarterly"
     report_types = cfg.get("report_types") or [1]
