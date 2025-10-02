@@ -3,6 +3,7 @@ from __future__ import annotations
 import calendar
 import hashlib
 import json
+import re
 import shutil
 import threading
 import time
@@ -29,6 +30,7 @@ from .transforms.deduplicate import mark_latest
 
 DATE_FMT = "%Y%m%d"
 MAX_PAGES = 200
+FRAME_FLUSH_THRESHOLD_ROWS = 200_000
 
 
 @dataclass(frozen=True)
@@ -424,20 +426,34 @@ class PeriodCombination:
 class PeriodFetchOutcome:
     frames: List[pd.DataFrame] = field(default_factory=list)
     last_successful_period: Optional[str] = None
+    last_contiguous_period: Optional[str] = None
     had_failure: bool = False
     failed_periods: List[str] = field(default_factory=list)
+    truncated_periods: List[Dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
 class DownloadAccumulator:
     frames: List[pd.DataFrame] = field(default_factory=list)
     updates: List[Tuple[str, str, str]] = field(default_factory=list)
-    failures: List[Any] = field(default_factory=list)
+    failures: List[Dict[str, Any]] = field(default_factory=list)
 
     def merge(self, other: "DownloadAccumulator") -> None:
         self.frames.extend(other.frames)
         self.updates.extend(other.updates)
         self.failures.extend(other.failures)
+
+    def total_rows(self) -> int:
+        total = 0
+        for frame in self.frames:
+            if frame is not None:
+                total += len(frame)
+        return total
+
+    def pop_frames(self) -> List[pd.DataFrame]:
+        frames = self.frames
+        self.frames = []
+        return frames
 
 
 @dataclass
@@ -458,6 +474,7 @@ class MarketDatasetDownloader:
         state_backend: StateBackend | None = None,
         allow_future: bool = False,
         max_retries: int = 3,
+        flush_threshold_rows: int = FRAME_FLUSH_THRESHOLD_ROWS,
     ) -> None:
         self.pro = pro
         self.data_dir = data_dir
@@ -470,6 +487,10 @@ class MarketDatasetDownloader:
             self.limiter = RateLimiter(max_per_minute=max_per_minute)
         self.allow_future = allow_future
         self.retry_policy = RetryPolicy(max_retries=max_retries)
+        self.flush_threshold_rows = max(int(flush_threshold_rows), 0)
+        self._field_cache: Dict[Tuple[str, str], Set[str]] = {}
+        self._field_missing_logged: Set[Tuple[str, str]] = set()
+        self._field_extra_logged: Set[Tuple[str, str]] = set()
         state_file = (
             Path(state_path) if state_path else Path(data_dir) / "_state" / "state.json"
         )
@@ -534,6 +555,28 @@ class MarketDatasetDownloader:
         if spec.date_field is not None:
             self._download_calendar(spec, options, start_date, end_date)
 
+    def _should_flush(self, accumulator: DownloadAccumulator) -> bool:
+        if self.flush_threshold_rows <= 0:
+            return False
+        return accumulator.total_rows() >= self.flush_threshold_rows
+
+    def _flush_accumulator(
+        self, accumulator: DownloadAccumulator, spec: DatasetSpec
+    ) -> bool:
+        if not accumulator.frames:
+            return True
+        frames = accumulator.pop_frames()
+        combined = self._concat_and_dedup(frames, spec)
+        if combined is None:
+            return True
+        return write_parquet_dataset(
+            combined,
+            self.data_dir,
+            spec.name,
+            spec.default_year_column,
+            group_keys=spec.dedup_group_keys or spec.primary_keys,
+        )
+
     def _download_periodic(
         self,
         spec: DatasetSpec,
@@ -549,6 +592,7 @@ class MarketDatasetDownloader:
         period_end = self._bounded_period_end(end_date)
 
         accumulator = DownloadAccumulator()
+        write_ok = True
         for combo in combinations:
             combo_result = self._run_periodic_combo(
                 spec,
@@ -560,28 +604,16 @@ class MarketDatasetDownloader:
                 paginate,
             )
             accumulator.merge(combo_result)
+            if self._should_flush(accumulator):
+                write_ok = write_ok and self._flush_accumulator(accumulator, spec)
 
-        combined = self._concat_and_dedup(accumulator.frames, spec)
-        write_ok = True
-        if combined is not None:
-            write_ok = write_parquet_dataset(
-                combined,
-                self.data_dir,
-                spec.name,
-                spec.default_year_column,
-                group_keys=spec.dedup_group_keys or spec.primary_keys,
-            )
-        failure_entries = [
-            {"combo": desc, "periods": periods}
-            for desc, periods in accumulator.failures
-        ]
+        write_ok = write_ok and self._flush_accumulator(accumulator, spec)
+        failure_entries = accumulator.failures
         self._record_failures(spec, failure_entries, "periods")
         if write_ok:
             for dataset, key, value in accumulator.updates:
                 self.state.set(dataset, key, value)
-            for desc, periods in accumulator.failures:
-                failed = ", ".join(periods)
-                print(f"提示：{spec.name} {desc} 未成功的 period: {failed}")
+            self._print_failure_summary(spec, failure_entries)
 
     def _download_per_stock(
         self,
@@ -603,6 +635,7 @@ class MarketDatasetDownloader:
         method_name, paginate = self._resolve_method(spec)
         period_end = self._bounded_period_end(end_date)
         accumulator = DownloadAccumulator()
+        write_ok = True
         for _, row in stock_df.iterrows():
             ts_code = str(row.get("ts_code", "")).strip()
             if not ts_code:
@@ -620,26 +653,16 @@ class MarketDatasetDownloader:
                 paginate,
             )
             accumulator.merge(stock_result)
+            if self._should_flush(accumulator):
+                write_ok = write_ok and self._flush_accumulator(accumulator, spec)
 
-        combined = self._concat_and_dedup(accumulator.frames, spec)
-        write_ok = True
-        if combined is not None:
-            write_ok = write_parquet_dataset(
-                combined,
-                self.data_dir,
-                spec.name,
-                spec.default_year_column,
-                group_keys=spec.dedup_group_keys or spec.primary_keys,
-            )
-        self._record_failures(spec, accumulator.failures, "per_stock")
+        write_ok = write_ok and self._flush_accumulator(accumulator, spec)
+        failure_entries = accumulator.failures
+        self._record_failures(spec, failure_entries, "per_stock")
         if write_ok:
             for dataset, key, value in accumulator.updates:
                 self.state.set(dataset, key, value)
-            for entry in accumulator.failures:
-                periods = ", ".join(entry["periods"])
-                print(
-                    f"提示：{spec.name} {entry['ts_code']} 未成功的 period: {periods}"
-                )
+            self._print_failure_summary(spec, failure_entries)
 
     def _run_periodic_combo(
         self,
@@ -666,13 +689,24 @@ class MarketDatasetDownloader:
         if not periods:
             return result
         outcome = self._collect_periods(spec, periods, combo, method_name, paginate)
-        result.frames.extend(outcome.frames)
-        if outcome.last_successful_period is not None:
+        if outcome.frames:
+            result.frames.extend(outcome.frames)
+        if outcome.last_contiguous_period is not None:
             result.updates.append(
-                (spec.name, state_key, outcome.last_successful_period)
+                (spec.name, state_key, outcome.last_contiguous_period)
             )
-        if outcome.failed_periods:
-            result.failures.append((combo.describe(spec), outcome.failed_periods))
+        if outcome.failed_periods or outcome.truncated_periods:
+            params = dict(spec.extra_params)
+            params.update(combo.as_params(spec))
+            failure_record: Dict[str, Any] = {
+                "combo": combo.describe(spec),
+                "params": self._summarize_params(params),
+            }
+            if outcome.failed_periods:
+                failure_record["failed_periods"] = list(outcome.failed_periods)
+            if outcome.truncated_periods:
+                failure_record["truncated"] = list(outcome.truncated_periods)
+            result.failures.append(failure_record)
         return result
 
     def _run_stock_download(
@@ -734,7 +768,9 @@ class MarketDatasetDownloader:
 
         combo_desc = combo.describe(spec)
         failed_periods: List[str] = []
-        last_success: Optional[str] = None
+        truncated: List[Dict[str, Any]] = []
+        failure_seen = False
+        last_contiguous: Optional[str] = None
         for period_value in periods:
             frame, success = self._call_stock_period(
                 spec,
@@ -745,6 +781,7 @@ class MarketDatasetDownloader:
                 period_value,
             )
             if not success:
+                failure_seen = True
                 failed_periods.append(period_value)
                 print(
                     "警告："
@@ -752,19 +789,31 @@ class MarketDatasetDownloader:
                     f"在 {period_value} 抓取失败，请稍后手动排查"
                 )
                 continue
-            last_success = period_value
-            if frame is not None and not frame.empty:
-                result.frames.append(frame)
-        if last_success is not None:
-            result.updates.append((spec.name, state_key, last_success))
-        if failed_periods:
-            result.failures.append(
-                {
-                    "ts_code": ts_code,
-                    "combo": combo_desc,
-                    "periods": failed_periods,
-                }
-            )
+            if not failure_seen:
+                last_contiguous = period_value
+            if frame is not None:
+                info = self._extract_truncation_metadata(
+                    frame, period=period_value, ts_code=ts_code
+                )
+                if info:
+                    truncated.append(info)
+                if not frame.empty:
+                    result.frames.append(frame)
+        if last_contiguous is not None:
+            result.updates.append((spec.name, state_key, last_contiguous))
+        if failed_periods or truncated:
+            params = dict(spec.extra_params)
+            params.update(combo.as_params(spec))
+            failure_record: Dict[str, Any] = {
+                "ts_code": ts_code,
+                "combo": combo_desc,
+                "params": self._summarize_params(params),
+            }
+            if failed_periods:
+                failure_record["failed_periods"] = failed_periods
+            if truncated:
+                failure_record["truncated"] = truncated
+            result.failures.append(failure_record)
         return result
 
     def _call_stock_period(
@@ -791,6 +840,7 @@ class MarketDatasetDownloader:
         if df.empty:
             return df, True
         frame = df.copy()
+        frame.attrs = dict(df.attrs)
         if spec.code_param not in frame.columns:
             frame[spec.code_param] = ts_code
         if (
@@ -846,16 +896,36 @@ class MarketDatasetDownloader:
         if not windows:
             return
         collected: List[pd.DataFrame] = []
-        last_completed: Optional[str] = None
-        failed_windows: List[str] = []
+        failure_seen = False
+        last_contiguous: Optional[str] = None
+        window_records: Dict[str, Dict[str, Any]] = {}
         for win_start, win_end in windows:
+            window_id = f"{win_start}-{win_end}"
             df = self._fetch_window(spec, win_start, win_end)
+            params = dict(spec.extra_params)
+            params[spec.date_start_param] = win_start
+            params[spec.date_end_param] = win_end
+            params_summary = self._summarize_params(params)
             if df is None:
-                failed_windows.append(f"{win_start}-{win_end}")
+                failure_seen = True
+                window_records[window_id] = {
+                    "window": window_id,
+                    "status": "failed",
+                    "params": params_summary,
+                }
                 continue
+            info = self._extract_truncation_metadata(df, window=window_id)
+            if info:
+                entry = window_records.setdefault(
+                    window_id, {"window": window_id, "params": params_summary}
+                )
+                entry["truncated"] = True
+                if "pagination" in info:
+                    entry["pagination"] = info["pagination"]
             if not df.empty:
                 collected.append(df)
-            last_completed = win_end
+            if not failure_seen:
+                last_contiguous = win_end
         combined = self._concat_and_dedup(collected, spec)
         write_ok = True
         if combined is not None:
@@ -867,14 +937,117 @@ class MarketDatasetDownloader:
                 year_col,
                 group_keys=spec.dedup_group_keys or spec.primary_keys,
             )
-        failure_entries = [{"window": win} for win in failed_windows]
+        failure_entries = [
+            entry for entry in window_records.values() if len(entry) > 1
+        ]
         self._record_failures(spec, failure_entries, "windows")
-        if write_ok and last_completed is not None:
-            self.state.set(spec.name, state_key, last_completed)
-            if failed_windows:
-                print(
-                    f"提示：{spec.name} 部分窗口抓取失败：{', '.join(failed_windows)}"
-                )
+        if write_ok and last_contiguous is not None:
+            self.state.set(spec.name, state_key, last_contiguous)
+            if failure_entries:
+                self._print_calendar_failures(spec, failure_entries)
+
+    def _print_failure_summary(
+        self, spec: DatasetSpec, failures: Sequence[Dict[str, Any]]
+    ) -> None:
+        if not failures:
+            return
+        for entry in failures:
+            combo_desc = entry.get("combo", "默认组合")
+            ts_code = entry.get("ts_code")
+            failed_periods = entry.get("failed_periods") or []
+            truncated = entry.get("truncated") or []
+            parts: List[str] = [spec.name]
+            if ts_code:
+                parts.append(str(ts_code))
+            if combo_desc:
+                parts.append(str(combo_desc))
+            prefix = " ".join(parts)
+            if failed_periods:
+                failed = ", ".join(failed_periods)
+                print(f"提示：{prefix} 未成功的 period: {failed}")
+            for trunc in truncated:
+                period = trunc.get("period")
+                if period:
+                    print(f"提示：{prefix} 在 {period} 分页达到上限，详见失败记录")
+                else:
+                    print(f"提示：{prefix} 分页达到上限，详见失败记录")
+
+    def _print_calendar_failures(
+        self, spec: DatasetSpec, failures: Sequence[Dict[str, Any]]
+    ) -> None:
+        for entry in failures:
+            window = entry.get("window")
+            status = entry.get("status")
+            if status == "failed" and window:
+                print(f"提示：{spec.name} 窗口 {window} 抓取失败")
+            if entry.get("truncated") and window:
+                print(f"提示：{spec.name} 窗口 {window} 分页达到上限，详见失败记录")
+
+    def _extract_truncation_metadata(
+        self,
+        df: Optional[pd.DataFrame],
+        *,
+        period: Optional[str] = None,
+        ts_code: Optional[str] = None,
+        window: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        if df is None or not hasattr(df, "attrs"):
+            return None
+        if not df.attrs.get("page_limit_hit"):
+            return None
+        metadata: Dict[str, Any] = {"page_limit_hit": True}
+        if period is not None:
+            metadata["period"] = period
+        if ts_code is not None:
+            metadata["ts_code"] = ts_code
+        if window is not None:
+            metadata["window"] = window
+        pagination = df.attrs.get("pagination_info")
+        if isinstance(pagination, dict):
+            metadata["pagination"] = pagination
+        else:
+            metadata.setdefault("pagination", {})
+        return metadata
+
+    def _summarize_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        summary: Dict[str, Any] = {}
+        for key, value in sorted(params.items()):
+            if "token" in key.lower():
+                continue
+            if isinstance(value, (str, int, float, bool)) or value is None:
+                summary[key] = value
+            elif isinstance(value, (list, tuple, set)):
+                summary[key] = ",".join(sorted(str(v) for v in value))
+            else:
+                summary[key] = str(value)
+        return summary
+
+    def _expected_fields(self, api_name: str, fields: str) -> Set[str]:
+        key = (api_name, fields)
+        cached = self._field_cache.get(key)
+        if cached is not None:
+            return cached
+        items = [part.strip() for part in re.split(r"[\\n,]", fields) if part.strip()]
+        normalized = {item for item in items}
+        self._field_cache[key] = normalized
+        return normalized
+
+    def _validate_fields(
+        self, api_name: str, fields: Optional[str], df: pd.DataFrame
+    ) -> None:
+        if not fields:
+            return
+        expected = self._expected_fields(api_name, fields)
+        actual = {str(col).strip() for col in df.columns}
+        missing = sorted(field for field in expected - actual)
+        extra = sorted(field for field in actual - expected)
+        key = (api_name, fields)
+        if missing and key not in self._field_missing_logged:
+            print(f"警告：调用 {api_name} 返回缺少字段：{', '.join(missing)}")
+            self._field_missing_logged.add(key)
+        if extra and key not in self._field_extra_logged:
+            print(f"提示：调用 {api_name} 返回新增字段：{', '.join(extra)}")
+            self._field_extra_logged.add(key)
 
     def _resolve_report_types(
         self, spec: DatasetSpec, options: Dict[str, Any]
@@ -1046,6 +1219,7 @@ class MarketDatasetDownloader:
         paginate: bool,
     ) -> PeriodFetchOutcome:
         outcome = PeriodFetchOutcome()
+        failure_seen = False
         for period_value in periods:
             df, success = self._fetch_period(
                 spec,
@@ -1056,6 +1230,7 @@ class MarketDatasetDownloader:
             )
             if not success:
                 outcome.had_failure = True
+                failure_seen = True
                 outcome.failed_periods.append(period_value)
                 combo_desc = combo.describe(spec)
                 print(
@@ -1064,8 +1239,14 @@ class MarketDatasetDownloader:
                 )
                 continue
             outcome.last_successful_period = period_value
-            if df is not None and not df.empty:
-                outcome.frames.append(df)
+            if not failure_seen:
+                outcome.last_contiguous_period = period_value
+            if df is not None:
+                info = self._extract_truncation_metadata(df, period=period_value)
+                if info:
+                    outcome.truncated_periods.append(info)
+                if not df.empty:
+                    outcome.frames.append(df)
         return outcome
 
     def _fetch_period(
@@ -1090,6 +1271,7 @@ class MarketDatasetDownloader:
         if df.empty:
             return df, True
         frame = df.copy()
+        frame.attrs = dict(df.attrs)
         if (
             spec.type_param
             and spec.type_param not in frame.columns
@@ -1183,10 +1365,21 @@ class MarketDatasetDownloader:
                 offset += limit
                 use_pagination = True
             if not rows:
-                return pd.DataFrame()
+                result = pd.DataFrame()
+            else:
+                result = _concat_non_empty(rows)
+            if fields:
+                self._validate_fields(api_name, fields, result)
             if page_limit_hit:
                 print(f"警告：调用 {api_name} 达到分页上限 {MAX_PAGES}，结果可能被截断")
-            return _concat_non_empty(rows)
+                result.attrs["page_limit_hit"] = True
+                result.attrs["pagination_info"] = {
+                    "pages": pages,
+                    "limit": limit,
+                    "max_pages": MAX_PAGES,
+                    "params": self._summarize_params(params),
+                }
+            return result
 
         try:
             return call_with_retry(
