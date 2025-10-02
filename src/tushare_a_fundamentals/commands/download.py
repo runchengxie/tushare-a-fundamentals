@@ -12,6 +12,7 @@ from ..common import (
     _export_tables,
     _periods_from_cfg,
     build_income_export_tables,
+    ensure_enough_credits,
     ensure_ts_code,
     eprint,
     init_pro_api,
@@ -410,6 +411,8 @@ def _run_multi_dataset_flow(
     use_vip: bool,
 ) -> None:
     pro = init_pro_api(cfg.get("token"))
+    if use_vip:
+        ensure_enough_credits(pro)
     data_dir = cfg.get("data_dir") or "data"
     max_per_minute = cfg.get("max_per_minute")
     if max_per_minute is None:
