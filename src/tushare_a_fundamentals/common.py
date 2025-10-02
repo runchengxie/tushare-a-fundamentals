@@ -293,6 +293,7 @@ class ProPool:
 
 
 def init_pro_api(token: Optional[str]):
+    global _GLOBAL_TOKEN
     token_env = os.getenv("TUSHARE_TOKEN")
     tok = token or token_env
     if not tok:
@@ -308,14 +309,12 @@ def init_pro_api(token: Optional[str]):
                 tokens.append(candidate)
         if len(tokens) > 1:
             pool = ProPool(tokens, per_token_rate=90)
-            global _GLOBAL_TOKEN
             _GLOBAL_TOKEN = tokens[0]
             return pool
         import tushare as ts
 
         ts.set_token(tok)
         pro = ts.pro_api()
-        global _GLOBAL_TOKEN
         _GLOBAL_TOKEN = tok
         return pro
     except Exception as exc:

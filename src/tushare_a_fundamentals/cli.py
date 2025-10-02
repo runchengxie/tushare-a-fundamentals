@@ -143,6 +143,21 @@ def parse_cli() -> argparse.Namespace:
         help="多数据集输出目录（默认 data）",
     )
     sp_dl.add_argument(
+        "--with-audit",
+        action="store_true",
+        help="在默认数据集中追加 fina_audit",
+    )
+    sp_dl.add_argument(
+        "--audit-only",
+        action="store_true",
+        help="仅下载 fina_audit（忽略其他数据集）",
+    )
+    sp_dl.add_argument(
+        "--all",
+        action="store_true",
+        help="按配置列出的全部数据集（包含 fina_audit）",
+    )
+    sp_dl.add_argument(
         "--skip-existing",
         action="store_true",
         help="仅补缺，不执行滚动刷新",
@@ -200,9 +215,7 @@ def parse_cli() -> argparse.Namespace:
         dest="no_export",
         help="仅写 raw/parquet 数仓，不导出派生 CSV",
     )
-    sp_dl.add_argument(
-        "--export", action="store_true", dest="export_enabled"
-    )
+    sp_dl.add_argument("--export", action="store_true", dest="export_enabled")
     sp_dl.set_defaults(export_enabled=None)
     sp_dl.add_argument(
         "--export-out-dir",
