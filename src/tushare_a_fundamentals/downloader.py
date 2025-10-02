@@ -1027,7 +1027,7 @@ class MarketDatasetDownloader:
         cached = self._field_cache.get(key)
         if cached is not None:
             return cached
-        items = [part.strip() for part in re.split(r"[\\n,]", fields) if part.strip()]
+        items = [part.strip() for part in re.split(r"[\n,]", fields) if part.strip()]
         normalized = {item for item in items}
         self._field_cache[key] = normalized
         return normalized
@@ -1330,7 +1330,7 @@ class MarketDatasetDownloader:
             rows: List[pd.DataFrame] = []
             offset = 0
             pages = 0
-            use_pagination = paginate
+            use_pagination = bool(paginate)
             page_limit_hit = False
             seen_signatures: Set[bytes] = set()
             while True:
@@ -1358,12 +1358,12 @@ class MarketDatasetDownloader:
                 seen_signatures.add(signature)
                 rows.append(df)
                 pages += 1
-                if len(df) < limit or pages >= MAX_PAGES:
+                if use_pagination and (len(df) < limit or pages >= MAX_PAGES):
                     if pages >= MAX_PAGES:
                         page_limit_hit = True
                     break
-                offset += limit
-                use_pagination = True
+                if use_pagination:
+                    offset += limit
             if not rows:
                 result = pd.DataFrame()
             else:
