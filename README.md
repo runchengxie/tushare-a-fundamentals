@@ -2,6 +2,8 @@
 
 本项目旨在提供命令行脚本批量抓取 A 股上市公司基本面数据，并允许输出年度，季度累计，或者单季三种口径。
 
+> 本仓库以多数据集批量模式为准，单一利润表旧流程仅保留历史说明。
+
 > 由于该项目主要目的是全A市场全量数据下载，强烈建议使用5000积分API账户，非全量数据的下载功能尚未完善，不建议使用（本项目未实现个股枚举 fallback）
 
 * [利润表](https://tushare.pro/document/2?doc_id=33)
@@ -74,17 +76,17 @@ recent_quarters: 4          # 刷新最近的季度数 (建议 2-4 覆盖常见�
 
 凡是下载列表中包含 `income` 的任务，会按照配置里的导出选项自动生成 `cumulative/single/annual` CSV；其他数据集保持 parquet 形式，可按需再运行 `funda export`。
 
-注意：`--raw-only`、`--build-only`、`--force` 仅适用于旧版利润表流程，若在多数据集模式中使用会被忽略或报错。若需统一产出目录，可在 `download`、`coverage`、`export` 命令中同时显式指定 `--data-dir`／`--dataset-root` 指向同一路径（如 `data`），避免默认值分别落在 `data/` 与 `out/` 造成混淆。
+注意：若需统一产出目录，可在 `download`、`coverage`、`export` 命令中同时显式指定 `--data-dir`／`--dataset-root` 指向同一路径（如 `data`），避免历史目录造成混淆。
 
 ## 可选附加功能
 
 1. 检查缓存数据是否完整：`funda coverage`
 
-   * 默认读取 `out/`（旧版单数据集目录）。若已在多数据集模式中使用 `data/`，可加 `--dataset-root data` 以保持一致。
+   * 默认读取 `data/`。如使用自定义目录，可通过 `--dataset-root` 指定。
 
 2. 在已经有缓存数据的情况下，重新导出 CSV 或改写格式：`funda export`
 
-   * 默认读取 `out/`，可借由 `--dataset-root` 与 `--out-dir` 将输入/输出统一到自定义目录（例如 `data/` 与 `data/export`）。
+   * 默认读取 `data/`，可借由 `--dataset-root` 与 `--out-dir` 将输入/输出统一到自定义目录（例如 `data/` 与 `data/export`）。
 
 3. 查看/维护增量状态与失败清单：`funda state show|clear|ls-failures`
 
@@ -166,9 +168,7 @@ funda download --since 2010-01-01 --until 2019-12-31
 
 * 默认补缺 + 滚动刷新：若检测到缺口会补齐历史数据，并额外重抓最近 8 个季度（可用 `--recent-quarters` 调整）
 
-* 仅补缺：追加 `--skip-existing`，跳过滚动刷新，仅抓取缺失组合
-
-* 强制覆盖：追加 `--force`，无条件重新下载并覆盖输出文件（用于当部分公司进行回溯调整后，用户得以刷新数据库里的旧数据）
+* 仅补缺：将 `--recent-quarters` 设为 0（或配置 `recent_quarters: 0`），跳过滚动刷新，仅抓取缺失组合
 
 参数说明：
 
@@ -190,8 +190,6 @@ funda download --since 2010-01-01 --until 2019-12-31
 
 * `--state-path PATH`：覆盖增量状态文件位置；JSON 默认 `<data_dir>/_state/state.json`，SQLite 后端默认 `meta/state.db`。
 
-* `--raw-only`：只下载 raw，不构建数仓；`--build-only`：跳过下载，仅由已有 raw 构建数仓。
-
 * 默认会依据披露截止日裁掉未来季度，如需强制包含可加 `--allow-future`；
 
 * `--no-export` / `--export`：关闭或显式开启派生数据导出；`--export-format`、`--export-out-dir`、`--export-kinds`、`--export-years`、`--export-annual-strategy` 用于自定义 CSV 输出。
@@ -199,8 +197,6 @@ funda download --since 2010-01-01 --until 2019-12-31
 * 每次下载如遇失败 period/window，会在 `data/_state/failures/` 下生成对应 JSON 清单，方便后续优先补齐。
 
 * `--strict-export`：导出失败时返回非零状态码（默认仅记录警告并继续）。
-
-*注：`--skip-existing` 仅对旧版单数据集流程生效，在多数据集模式下请使用 `recent_quarters: 0` 控制补缺行为。*
 
 全量下载（建议）：
 
@@ -214,7 +210,7 @@ funda download --since 2010-01-01 --until 2019-12-31
     funda download --years 30
     ```
 
-说明：下载口径固定为“按季度期末日的累计（YTD）值”，默认会生成 `dataset=inventory_income` 与 `dataset=fact_income_cum` 两套 parquet 数仓，并自动导出年度/季度累计/单季 CSV；仅需原始去重表时可追加 `--raw-only` 或 `--no-export`。
+说明：下载口径固定为“按季度期末日的累计（YTD）值”，默认会生成 `dataset=inventory_income` 与 `dataset=fact_income_cum` 两套 parquet 数仓，并自动导出年度/季度累计/单季 CSV；仅需原始去重表时可追加 `--no-export`。
 
 #### 数据完整性检测/可视化覆盖情况
 
@@ -222,7 +218,7 @@ funda download --since 2010-01-01 --until 2019-12-31
 funda coverage
 ```
 
-默认会先输出覆盖率摘要，再按 `--by` 生成矩阵（数值约定：`1=覆盖`、`0=缺口`、`-1=豁免`）。追加 `--csv path/to/gaps.csv` 可导出缺口清单。数据集根目录默认为 `out`，可用 `--dataset-root` 指定；当多数据集模式产出在 `data/` 时，推荐显式传入 `--dataset-root data` 以保持一致。`--years` 可调整年份窗口（默认近 10 年）。
+默认会先输出覆盖率摘要，再按 `--by` 生成矩阵（数值约定：`1=覆盖`、`0=缺口`、`-1=豁免`）。追加 `--csv path/to/gaps.csv` 可导出缺口清单。数据集根目录默认为 `data`，可用 `--dataset-root` 指定。`--years` 可调整年份窗口（默认近 10 年）。
 
 说明：
 
@@ -248,8 +244,15 @@ funda export --kinds annual,single,cumulative \\
   --dataset-root data --out-format csv --out-dir data/export
 ```
 
-同样默认读取 `out` 目录下的数据集，并导出最近 10 年（若在 `download` 阶段未指定 `--export-years` 则默认沿用下载窗口）。若手动指定的窗口大于缓存中已有的季度范围，CLI 会提示并仅导出当前目录下已构建的数据。可通过 `--dataset-root`（示例中切换到 `data/`）、`--years` 或 `--out-format` 参数微调。
+同样默认读取 `data` 目录下的数据集，并导出最近 10 年（若在 `download` 阶段未指定 `--export-years` 则默认沿用下载窗口）。若手动指定的窗口大于缓存中已有的季度范围，CLI 会提示并仅导出当前目录下已构建的数据。可通过 `--dataset-root`（示例中切换到 `data/`）、`--years` 或 `--out-format` 参数微调。
 导出的结果统一使用 `ts_code` 作为证券主键，并按 `ts_code`、`end_date` 排序。
+
+### 兼容旧版单数据集流程
+
+* 历史流程沿用 `out/` 目录作为默认输入/输出；如需复刻旧目录结构，可在命令中显式设置 `--dataset-root out` 或 `--out-dir out`。
+* `--raw-only`：只下载原始数据，不构建数仓派生层。
+* `--build-only`：跳过下载，仅由现有原始数据构建数仓派生层。
+* 旧版存在 `--skip-existing`、`--force` 等覆盖策略开关，现已被统一的 `recent_quarters` 配置取代。
 
 ## 常见问题
 
@@ -267,7 +270,7 @@ funda export --kinds annual,single,cumulative \\
 
 1. Tushare的三张报表实际上提供了12种不同的类型，本项目走的是tushare的默认版本，也就是合并报表，但是可以通过修改根目录的config.yaml，或者临时加入指令选项来改变该项目的下载行为，例如--report-types 6，意味着下载母公司报表类型
 
-2. 当系统检测到config.yaml指定的下载类型，和实际在项目缓存的数据类型（在out/parquet的已有数据类型）不符时，将做出提示，如用户确认将按config.yaml指定的下载类型进行下载，可通过附加指令选项来完成
+2. 当系统检测到config.yaml指定的下载类型，和实际在项目缓存的数据类型（在 `data/parquet` 或自定义 `--dataset-root` 下的已有数据类型）不符时，将做出提示，如用户确认将按config.yaml指定的下载类型进行下载，可通过附加指令选项来完成
 
 | 代码 | 类型                 | 说明                                             |
 | :--- | :------------------- | :----------------------------------------------- |
