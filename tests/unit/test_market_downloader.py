@@ -80,6 +80,7 @@ def test_market_downloader_periodic(tmp_path, monkeypatch):
     dl = MarketDatasetDownloader(
         pro,
         data_dir=str(tmp_path),
+        vip_pro=pro,
         use_vip=True,
         max_per_minute=0,
         state_path=str(state_path),
@@ -104,6 +105,44 @@ def test_market_downloader_periodic(tmp_path, monkeypatch):
     assert len(df) == 4
     state = json.loads(Path(state_path).read_text("utf-8"))
     assert state["income"]["last_period:rt=1"] == "20201231"
+
+
+def test_market_downloader_prefers_vip_client(tmp_path, monkeypatch):
+    class PassivePro:
+        def income_vip(self, **kwargs):  # pragma: no cover - should not be called
+            raise AssertionError("基础 token 不应承担 VIP 请求")
+
+    vip = DummyPro()
+    saved = []
+
+    def fake_write(df, root, dataset, year_col, *, group_keys=None):
+        saved.append(df.copy())
+        return True
+
+    monkeypatch.setattr(
+        "tushare_a_fundamentals.downloader.write_parquet_dataset", fake_write
+    )
+    state_path = tmp_path / "state.json"
+    dl = MarketDatasetDownloader(
+        PassivePro(),
+        data_dir=str(tmp_path),
+        vip_pro=vip,
+        use_vip=True,
+        max_per_minute=0,
+        state_path=str(state_path),
+    )
+    dl.run(
+        [DatasetRequest(name="income", options={"report_types": [1]})],
+        start="2020-01-01",
+        end="2020-12-31",
+    )
+    assert vip.period_calls == [
+        "20200331",
+        "20200630",
+        "20200930",
+        "20201231",
+    ]
+    assert saved
 
 
 def test_market_downloader_calendar(tmp_path, monkeypatch):
@@ -182,6 +221,7 @@ def test_failure_log_written_and_cleared(tmp_path):
     dl = MarketDatasetDownloader(
         pro,
         data_dir=str(tmp_path),
+        vip_pro=pro,
         use_vip=True,
         max_per_minute=0,
         state_path=str(tmp_path / "state.json"),

@@ -292,34 +292,213 @@ class ProPool:
         return _fallback
 
 
-def init_pro_api(token: Optional[str]):
+@dataclass
+class ProContext:
+    any_client: Any
+    vip_client: Any | None
+    tokens: List[str]
+    vip_tokens: List[str]
+
+    def vip_or_default(self) -> Any:
+        return self.vip_client or self.any_client
+
+
+@dataclass
+class TokenInfo:
+    token: str
+    credits: Optional[float]
+    is_vip: bool
+    source: Optional[str] = None
+    detection_failed: bool = False
+
+
+def _mask_token(token: str) -> str:
+    trimmed = (token or "").strip()
+    if len(trimmed) <= 8:
+        return trimmed[:2] + "***" if trimmed else "<empty>"
+    return f"{trimmed[:4]}...{trimmed[-4:]}"
+
+
+def _split_token_list(raw: Optional[str]) -> List[str]:
+    if not raw:
+        return []
+    items = [item.strip() for item in raw.split(",")]
+    return [item for item in items if item]
+
+
+def _env_flag(name: str, default: bool = True) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    lowered = raw.strip().lower()
+    return lowered not in {"0", "false", "no", "off"}
+
+
+def _format_credit_value(value: Optional[float]) -> str:
+    if value is None:
+        return "未知"
+    try:
+        dec = Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        try:
+            num = float(value)
+        except (TypeError, ValueError):
+            return str(value)
+        if math.isclose(num, round(num)):
+            return f"{int(round(num))}"
+        return f"{num:.2f}"
+    if dec == dec.to_integral():
+        return f"{int(dec)}"
+    return str(dec.normalize())
+
+
+def _evaluate_token_info(
+    token: str, manual_vip: Sequence[str], detect_vip: bool
+) -> TokenInfo:
+    credits: Optional[float] = None
+    is_vip = False
+    source: Optional[str] = None
+    detection_failed = False
+    if token in manual_vip:
+        is_vip = True
+        source = "手动指定"
+        if detect_vip:
+            credits = _probe_token_credits(token)
+            detection_failed = credits is None
+    elif detect_vip:
+        credits = _probe_token_credits(token)
+        detection_failed = credits is None
+        if _credits_meet_requirement(credits, 5000):
+            is_vip = True
+            source = "自动识别"
+    return TokenInfo(
+        token=token,
+        credits=credits,
+        is_vip=is_vip,
+        source=source,
+        detection_failed=detection_failed,
+    )
+
+
+def _format_token_log(
+    index: int,
+    info: TokenInfo,
+    manual_vip: Sequence[str],
+    detect_vip: bool,
+) -> str:
+    label = "VIP" if info.is_vip else "普通"
+    credit_text = _format_credit_value(info.credits)
+    notes: List[str] = []
+    if info.source:
+        notes.append(f"来源：{info.source}")
+    if detect_vip and info.detection_failed:
+        notes.append("积分检测失败")
+    elif not detect_vip and info.token not in manual_vip:
+        notes.append("未启用自动检测")
+    message = f"  - token#{index} {_mask_token(info.token)}：{label}（积分：{credit_text}）"
+    if notes:
+        message += "，" + "，".join(notes)
+    return message
+
+
+def _derive_vip_tokens(
+    tokens: Sequence[str],
+    infos: Sequence[TokenInfo],
+    manual_vip: Sequence[str],
+    detect_vip: bool,
+) -> Tuple[List[str], List[str]]:
+    warnings: List[str] = []
+    if manual_vip:
+        vip_tokens = [tok for tok in tokens if tok in manual_vip]
+        missing = [tok for tok in manual_vip if tok not in tokens]
+        if missing:
+            masked = ", ".join(_mask_token(tok) for tok in missing)
+            warnings.append(
+                f"警告：TUSHARE_VIP_TOKENS 包含未参与轮询的 token：{masked}"
+            )
+        return vip_tokens, warnings
+    if detect_vip:
+        vip_tokens = [info.token for info in infos if info.is_vip]
+        return vip_tokens, warnings
+    warnings.append(
+        "警告：未启用自动检测且未指定 TUSHARE_VIP_TOKENS，已默认第一个 token 作为 VIP，请确认其积分 ≥5000。"
+    )
+    return list(tokens[:1]), warnings
+
+
+def init_pro_api(token: Optional[str]) -> ProContext:  # noqa: C901
     global _GLOBAL_TOKEN
+
     token_env = os.getenv("TUSHARE_TOKEN")
-    tok = token or token_env
-    if not tok:
+    primary = token or token_env
+    if not primary:
         eprint(
             "错误：缺少 TuShare token。请通过环境变量 TUSHARE_TOKEN 或 --token 提供。"
         )
         sys.exit(2)
+
+    tokens: List[str] = []
+    for candidate in (primary, os.getenv("TUSHARE_TOKEN_2")):
+        if candidate and candidate not in tokens:
+            tokens.append(candidate)
+
+    manual_vip = _split_token_list(os.getenv("TUSHARE_VIP_TOKENS"))
+    detect_vip = _env_flag("TUSHARE_DETECT_VIP", default=True)
+
+    if len(tokens) > 1:
+        print("提示：检测到多个 TuShare token，将自动分配 VIP 凭证。")
+    if manual_vip:
+        print("提示：已根据环境变量 TUSHARE_VIP_TOKENS 指定 VIP token。")
+    elif not detect_vip and len(tokens) > 1:
+        print("提示：已禁用自动检测 VIP token（TUSHARE_DETECT_VIP=false）。")
+
+    token_infos = [
+        _evaluate_token_info(tok, manual_vip, detect_vip) for tok in tokens
+    ]
+    for idx, info in enumerate(token_infos, start=1):
+        print(_format_token_log(idx, info, manual_vip, detect_vip))
+
+    vip_tokens, derived_warnings = _derive_vip_tokens(
+        tokens, token_infos, manual_vip, detect_vip
+    )
+    for warn in derived_warnings:
+        print(warn)
+
+    if not vip_tokens and len(tokens) == 1 and detect_vip:
+        print("警告：无法检测 token 积分，已默认将唯一 token 视为 VIP。")
+        vip_tokens = tokens.copy()
+    elif not vip_tokens and detect_vip:
+        print(
+            "警告：未检测到满足 VIP 门槛的 token，use_vip=true 时将无法批量抓取，"
+            "请确认至少一个 token 拥有 ≥5000 积分或设置 TUSHARE_VIP_TOKENS。"
+        )
+
     try:
-        extra = os.getenv("TUSHARE_TOKEN_2")
-        tokens: List[str] = []
-        for candidate in (tok, extra):
-            if candidate and candidate not in tokens:
-                tokens.append(candidate)
-        if len(tokens) > 1:
-            pool = ProPool(tokens, per_token_rate=90)
-            _GLOBAL_TOKEN = tokens[0]
-            return pool
         import tushare as ts
 
-        ts.set_token(tok)
-        pro = ts.pro_api()
-        _GLOBAL_TOKEN = tok
-        return pro
+        if len(tokens) > 1:
+            any_client: Any = ProPool(tokens, per_token_rate=90)
+        else:
+            ts.set_token(tokens[0])
+            any_client = ts.pro_api()
+
+        vip_client: Any | None = None
+        if vip_tokens:
+            if len(vip_tokens) == len(tokens):
+                vip_client = any_client
+            elif len(vip_tokens) == 1:
+                vip_client = ts.pro_api(token=vip_tokens[0])
+            else:
+                vip_client = ProPool(vip_tokens, per_token_rate=90)
+        else:
+            vip_client = None
     except Exception as exc:
         eprint(f"错误：初始化 TuShare 失败：{exc}")
         sys.exit(2)
+
+    primary_for_global = vip_tokens[0] if vip_tokens else tokens[0]
+    _GLOBAL_TOKEN = primary_for_global
+    return ProContext(any_client=any_client, vip_client=vip_client, tokens=tokens, vip_tokens=vip_tokens)
 
 
 def periods_for_mode_by_years(years: int, mode: str) -> List[str]:
@@ -528,76 +707,103 @@ def call_with_retry(
             sleep_func(wait_seconds)
 
 
-def _available_credits(pro) -> float | None:  # noqa: C901
-    """Return detected total credits (sum of expiring credits) or None if unknown.
-
-    Be tolerant to schema differences: prefer Chinese column "到期积分",
-    but also try any column that looks like points (e.g., contains
-    "积分" or "point").
-    """
-    df = None
-    try:
-        df = pro.user()
-    except Exception:
-        df = None
-    # Some environments require passing token explicitly to user()
-    if df is None or hasattr(df, "empty") and df.empty:
-        try:
-            import tushare as ts
-
-            tok = (
-                _GLOBAL_TOKEN
-                or os.getenv("TUSHARE_TOKEN")
-                or os.getenv("TUSHARE_API_KEY")
-            )
-            if tok:
-                pro2 = ts.pro_api(token=tok)
-                df = pro2.user(token=tok)
-        except Exception:
-            df = None
-    if df is None or df.empty:
+def _sum_credits_from_df(df: pd.DataFrame | None) -> Optional[float]:
+    if df is None or not hasattr(df, "empty") or df.empty:
         return None
     cols = list(df.columns)
-    target_cols: list[str] = []
     if "到期积分" in cols:
         target_cols = ["到期积分"]
     else:
-        # Fallback: any column name containing 积分 or point (case-insensitive)
         target_cols = [
             c for c in cols if ("积分" in str(c)) or ("point" in str(c).lower())
         ]
     if not target_cols:
         return None
     total = 0.0
-    for c in target_cols:
+    for col in target_cols:
         try:
-            s = pd.to_numeric(df[c].astype(str).str.replace(",", ""), errors="coerce")
-            if s.notna().any():
-                total += float(s.sum(skipna=True))
+            series = pd.to_numeric(
+                df[col].astype(str).str.replace(",", ""), errors="coerce"
+            )
         except Exception:
             continue
+        if series.notna().any():
+            try:
+                total += float(series.sum(skipna=True))
+            except Exception:
+                continue
     return total if total > 0 else None
 
 
-def _has_enough_credits(pro, required: int = 5000) -> bool:
-    """Return True if total credits meet the threshold."""
-    total = _available_credits(pro)
-    if total is None:
+def _available_credits(pro, *, token: str | None = None) -> float | None:
+    """Return detected total credits (sum of expiring credits) or None if unknown."""
+
+    attempts: List[Callable[[], Any]] = []
+    if token:
+        attempts.append(lambda: pro.user(token=token))
+    attempts.append(pro.user)
+
+    if token is None:
+        tok = (
+            _GLOBAL_TOKEN
+            or os.getenv("TUSHARE_TOKEN")
+            or os.getenv("TUSHARE_API_KEY")
+        )
+        if tok:
+            def _fallback() -> Any:
+                import tushare as ts
+
+                proxy = ts.pro_api(token=tok)
+                return proxy.user(token=tok)
+
+            attempts.append(_fallback)
+
+    for attempt in attempts:
+        try:
+            df = attempt()
+        except Exception:
+            continue
+        total = _sum_credits_from_df(df)
+        if total is not None:
+            return total
+    return None
+
+
+def _credits_meet_requirement(value: Any, required: int = 5000) -> bool:
+    if value is None:
         return False
     try:
-        total_d = Decimal(str(total))
+        total_d = Decimal(str(value))
         required_d = Decimal(str(required))
     except (InvalidOperation, ValueError):
-        total_f = float(total)
-        required_f = float(required)
+        try:
+            total_f = float(value)
+            required_f = float(required)
+        except (TypeError, ValueError):
+            return False
         if total_f >= required_f:
             return True
         return math.isclose(total_f, required_f, rel_tol=1e-6, abs_tol=1e-3)
 
     if total_d >= required_d:
         return True
-    # Allow small rounding errors from the TuShare API (values like 4999.999).
     return 0 <= (required_d - total_d) <= Decimal("0.001")
+
+
+def _has_enough_credits(pro, required: int = 5000) -> bool:
+    """Return True if total credits meet the threshold."""
+    total = _available_credits(pro)
+    return _credits_meet_requirement(total, required)
+
+
+def _probe_token_credits(token: str) -> Optional[float]:
+    try:
+        import tushare as ts
+
+        client = ts.pro_api(token=token)
+    except Exception:
+        return None
+    return _available_credits(client, token=token)
 
 
 def ensure_enough_credits(pro, required: int = 5000) -> None:

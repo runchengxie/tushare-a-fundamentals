@@ -410,9 +410,15 @@ def _run_multi_dataset_flow(
     *,
     use_vip: bool,
 ) -> None:
-    pro = init_pro_api(cfg.get("token"))
+    ctx = init_pro_api(cfg.get("token"))
     if use_vip:
-        ensure_enough_credits(pro)
+        if not ctx.vip_tokens:
+            eprint(
+                "错误：未检测到满足 VIP 门槛（≥5000 积分）的 token。"
+                "如需批量抓取，请为至少一个 token 提供 5000 积分或设置 --use-vip=false。"
+            )
+            sys.exit(2)
+        ensure_enough_credits(ctx.vip_or_default())
     data_dir = cfg.get("data_dir") or "data"
     max_per_minute = cfg.get("max_per_minute")
     if max_per_minute is None:
@@ -428,17 +434,15 @@ def _run_multi_dataset_flow(
                 end_raw = periods_window[-1]
 
     downloader = MarketDatasetDownloader(
-        pro,
+        ctx.any_client,
         data_dir,
+        vip_pro=ctx.vip_client,
         use_vip=use_vip,
         max_per_minute=max_per_minute,
         state_path=cfg.get("state_path"),
         allow_future=bool(cfg.get("allow_future")),
         max_retries=int(cfg.get("max_retries", 3)),
     )
-
-    if os.getenv("TUSHARE_TOKEN_2"):
-        print("提示：检测到 TUSHARE_TOKEN_2，已启用多 token 轮询。")
 
     downloader.run(
         dataset_requests,

@@ -1,7 +1,8 @@
 import argparse
 import sys
 
-from .common import eprint, init_pro_api as _init_pro_api
+from .common import eprint
+from .common import init_pro_api as _init_pro_api
 
 # Re-export init_pro_api for tests that patch it at the CLI module level.
 init_pro_api = _init_pro_api

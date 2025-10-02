@@ -3,6 +3,7 @@ from argparse import Namespace
 import pytest
 
 import tushare_a_fundamentals.commands.download as download_cmd
+from tushare_a_fundamentals.common import ProContext
 
 pytestmark = pytest.mark.unit
 
@@ -11,7 +12,9 @@ def test_cmd_download_multi_dataset_uses_configured_years(monkeypatch, tmp_path)
     captured = {}
 
     class DummyDownloader:
-        def __init__(self, *args, **kwargs):
+        def __init__(self, pro, data_dir, *, vip_pro=None, **kwargs):
+            captured["pro"] = pro
+            captured["vip_pro"] = vip_pro
             captured["init_kwargs"] = kwargs
 
         def run(self, requests, *, start=None, end=None, refresh_periods=0):
@@ -21,7 +24,11 @@ def test_cmd_download_multi_dataset_uses_configured_years(monkeypatch, tmp_path)
             captured["refresh"] = refresh_periods
 
     monkeypatch.setattr(download_cmd, "MarketDatasetDownloader", DummyDownloader)
-    monkeypatch.setattr(download_cmd, "init_pro_api", lambda token: object())
+    dummy_ctx = ProContext(
+        any_client=object(), vip_client=object(), tokens=["tok"], vip_tokens=["tok"]
+    )
+    monkeypatch.setattr(download_cmd, "init_pro_api", lambda token: dummy_ctx)
+    monkeypatch.setattr(download_cmd, "ensure_enough_credits", lambda pro, required=5000: None)
     monkeypatch.setattr(download_cmd, "load_yaml", lambda path: {})
 
     args = Namespace(

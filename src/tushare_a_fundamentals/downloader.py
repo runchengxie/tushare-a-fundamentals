@@ -468,6 +468,7 @@ class MarketDatasetDownloader:
         pro: Any,
         data_dir: str,
         *,
+        vip_pro: Any | None = None,
         use_vip: bool = True,
         max_per_minute: int = 90,
         state_path: Optional[str] = None,
@@ -477,14 +478,15 @@ class MarketDatasetDownloader:
         flush_threshold_rows: int = FRAME_FLUSH_THRESHOLD_ROWS,
     ) -> None:
         self.pro = pro
+        self.vip_pro = vip_pro
         self.data_dir = data_dir
         self.use_vip = use_vip
-        if getattr(pro, "__is_token_pool__", False):
-            self.limiter = RateLimiter(max_per_minute=0)
-            if hasattr(pro, "set_rate"):
-                pro.set_rate(max_per_minute or 90)
-        else:
-            self.limiter = RateLimiter(max_per_minute=max_per_minute)
+        self._max_per_minute = max(int(max_per_minute), 0)
+        self._client_limiters: Dict[int, RateLimiter] = {}
+        self._warned_vip_fallback = False
+        self._ensure_limiter(self.pro)
+        if self.vip_pro is not None:
+            self._ensure_limiter(self.vip_pro)
         self.allow_future = allow_future
         self.retry_policy = RetryPolicy(max_retries=max_retries)
         self.flush_threshold_rows = max(int(flush_threshold_rows), 0)
@@ -495,6 +497,24 @@ class MarketDatasetDownloader:
             Path(state_path) if state_path else Path(data_dir) / "_state" / "state.json"
         )
         self.state = state_backend or JsonStateBackend(state_file)
+
+    def _ensure_limiter(self, client: Any) -> RateLimiter:
+        key = id(client)
+        limiter = self._client_limiters.get(key)
+        if limiter is not None:
+            return limiter
+        if getattr(client, "__is_token_pool__", False):
+            limiter = RateLimiter(max_per_minute=0)
+            set_rate = getattr(client, "set_rate", None)
+            if callable(set_rate):
+                try:
+                    set_rate(self._max_per_minute or 90)
+                except Exception:
+                    pass
+        else:
+            limiter = RateLimiter(max_per_minute=self._max_per_minute)
+        self._client_limiters[key] = limiter
+        return limiter
 
     def run(
         self,
@@ -588,7 +608,7 @@ class MarketDatasetDownloader:
         report_types = self._resolve_report_types(spec, options)
         type_values = self._resolve_type_values(spec, options)
         combinations = self._build_period_combinations(report_types, type_values)
-        method_name, paginate = self._resolve_method(spec)
+        client, method_name, paginate = self._resolve_method(spec)
         period_end = self._bounded_period_end(end_date)
 
         accumulator = DownloadAccumulator()
@@ -600,6 +620,7 @@ class MarketDatasetDownloader:
                 start_date,
                 period_end,
                 refresh_periods,
+                client,
                 method_name,
                 paginate,
             )
@@ -632,7 +653,7 @@ class MarketDatasetDownloader:
         report_types = self._resolve_report_types(spec, options)
         type_values = self._resolve_type_values(spec, options)
         combinations = self._build_period_combinations(report_types, type_values)
-        method_name, paginate = self._resolve_method(spec)
+        client, method_name, paginate = self._resolve_method(spec)
         period_end = self._bounded_period_end(end_date)
         accumulator = DownloadAccumulator()
         write_ok = True
@@ -649,6 +670,7 @@ class MarketDatasetDownloader:
                 start_date,
                 period_end,
                 refresh_periods,
+                client,
                 method_name,
                 paginate,
             )
@@ -671,6 +693,7 @@ class MarketDatasetDownloader:
         start_date: Optional[str],
         period_end: str,
         refresh_periods: int,
+        client: Any,
         method_name: str,
         paginate: bool,
     ) -> DownloadAccumulator:
@@ -688,7 +711,9 @@ class MarketDatasetDownloader:
         periods = quarter_periods(effective_start, period_end)
         if not periods:
             return result
-        outcome = self._collect_periods(spec, periods, combo, method_name, paginate)
+        outcome = self._collect_periods(
+            spec, periods, combo, client, method_name, paginate
+        )
         if outcome.frames:
             result.frames.extend(outcome.frames)
         if outcome.last_contiguous_period is not None:
@@ -718,6 +743,7 @@ class MarketDatasetDownloader:
         start_date: Optional[str],
         period_end: str,
         refresh_periods: int,
+        client: Any,
         method_name: str,
         paginate: bool,
     ) -> DownloadAccumulator:
@@ -731,6 +757,7 @@ class MarketDatasetDownloader:
                 start_date,
                 period_end,
                 refresh_periods,
+                client,
                 method_name,
                 paginate,
             )
@@ -746,6 +773,7 @@ class MarketDatasetDownloader:
         start_date: Optional[str],
         period_end: str,
         refresh_periods: int,
+        client: Any,
         method_name: str,
         paginate: bool,
     ) -> DownloadAccumulator:
@@ -774,6 +802,7 @@ class MarketDatasetDownloader:
         for period_value in periods:
             frame, success = self._call_stock_period(
                 spec,
+                client,
                 method_name,
                 paginate,
                 combo,
@@ -819,6 +848,7 @@ class MarketDatasetDownloader:
     def _call_stock_period(
         self,
         spec: DatasetSpec,
+        client: Any,
         method_name: str,
         paginate: bool,
         combo: PeriodCombination,
@@ -833,6 +863,7 @@ class MarketDatasetDownloader:
             method_name,
             params,
             spec.fields,
+            client=client,
             paginate=paginate,
         )
         if df is None:
@@ -1137,6 +1168,7 @@ class MarketDatasetDownloader:
             "stock_basic",
             params,
             fields="ts_code,list_date",
+            client=self.pro,
             paginate=True,
         )
         if df is None or df.empty:
@@ -1198,11 +1230,26 @@ class MarketDatasetDownloader:
             for tv in type_opts
         ]
 
-    def _resolve_method(self, spec: DatasetSpec) -> Tuple[str, bool]:
-        vip = spec.vip_api if self.use_vip else None
-        method_name = vip or spec.api
-        paginate = spec.vip_supports_pagination if vip else spec.api_supports_pagination
-        return method_name, paginate
+    def _resolve_method(self, spec: DatasetSpec) -> Tuple[Any, str, bool]:
+        if self.use_vip and spec.vip_api:
+            if self.vip_pro is None:
+                if not self._warned_vip_fallback:
+                    print(
+                        "警告：未检测到可用的 VIP token，已回落至普通接口，可能触发权限错误"
+                    )
+                    self._warned_vip_fallback = True
+                client = self.pro
+                method_name = spec.api
+                paginate = spec.api_supports_pagination
+            else:
+                client = self.vip_pro
+                method_name = spec.vip_api
+                paginate = spec.vip_supports_pagination
+        else:
+            client = self.pro
+            method_name = spec.api
+            paginate = spec.api_supports_pagination
+        return client, method_name, paginate
 
     def _bounded_period_end(self, end_date: str) -> str:
         if self.allow_future:
@@ -1215,6 +1262,7 @@ class MarketDatasetDownloader:
         spec: DatasetSpec,
         periods: Sequence[str],
         combo: PeriodCombination,
+        client: Any,
         method_name: str,
         paginate: bool,
     ) -> PeriodFetchOutcome:
@@ -1223,6 +1271,7 @@ class MarketDatasetDownloader:
         for period_value in periods:
             df, success = self._fetch_period(
                 spec,
+                client,
                 method_name,
                 paginate,
                 period_value,
@@ -1252,6 +1301,7 @@ class MarketDatasetDownloader:
     def _fetch_period(
         self,
         spec: DatasetSpec,
+        client: Any,
         method_name: str,
         paginate: bool,
         period_value: str,
@@ -1264,6 +1314,7 @@ class MarketDatasetDownloader:
             method_name,
             params,
             spec.fields,
+            client=client,
             paginate=paginate,
         )
         if df is None:
@@ -1292,6 +1343,7 @@ class MarketDatasetDownloader:
             spec.api,
             params,
             spec.fields,
+            client=self.pro,
             paginate=spec.api_supports_pagination,
         )
         return df
@@ -1302,16 +1354,18 @@ class MarketDatasetDownloader:
         params: Dict[str, Any],
         fields: Optional[str],
         *,
+        client: Any,
         paginate: bool,
     ) -> Optional[pd.DataFrame]:
-        func = getattr(self.pro, api_name, None)
+        func = getattr(client, api_name, None)
         if func is None:
 
             def fallback_call(**kwargs: Any) -> pd.DataFrame:
-                return self.pro.query(api_name, **kwargs)
+                return client.query(api_name, **kwargs)
 
             func = fallback_call
         policy = self.retry_policy
+        limiter = self._ensure_limiter(client)
 
         def _log_retry(attempt: int, exc: Exception, wait_seconds: float) -> None:
             print(
@@ -1342,7 +1396,7 @@ class MarketDatasetDownloader:
                     call_params.setdefault("limit", limit)
                 if fields:
                     call_params.setdefault("fields", fields)
-                self.limiter.wait()
+                limiter.wait()
                 df = func(**call_params)
                 if df is None or df.empty:
                     break
