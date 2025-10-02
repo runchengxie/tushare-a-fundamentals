@@ -129,9 +129,15 @@ recent_quarters: 4          # 刷新最近的季度数 (建议 2-4 覆盖常见�
 
     * `TUSHARE_TOKEN_2`：如需配置第二个 TuShare 凭证以实现轮询调用，可选填。
 
+    * `TUSHARE_VIP_TOKENS`：可选。逗号分隔的 token 列表，用于显式指定哪些凭证用于 VIP 接口轮询。未设置时将根据积分（≥5000）自动识别。
+
+    * `TUSHARE_DETECT_VIP`：可选。设为 `false`/`0` 可禁用自动识别 VIP 凭证；禁用后若未指定 `TUSHARE_VIP_TOKENS`，默认仅第一个 token 用于 VIP 调用。
+
     * `TUSHARE_API_KEY`：旧变量名。若设置且 `TUSHARE_TOKEN` 留空，会自动映射为主凭证。
 
   * 程序会通过 python-dotenv 自动读取 `.env`，或从 shell 环境变量读取（变量名同上）。
+
+  * 若配置了多个 token，程序会在启动时打印积分检测结果，仅对满足门槛的 token 使用 VIP 接口。未检测到合格凭证且 `--use-vip` 为真时会直接报错退出，避免运行中途触发权限异常。
 
 * `.envrc`（本地，可选）：开发环境自动化脚本（需安装 direnv）。
 
