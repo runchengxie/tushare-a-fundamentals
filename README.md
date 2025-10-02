@@ -35,9 +35,9 @@ funda download         # 批量调度下载，缓存，并导出CSV
 
 提示：缺少 `config.yml/config.yaml` 时会自动使用默认参数；日志会提示可以复制模板来自定义。
 
-### 多数据集批量下载（VIP 优先）
+### 多数据集批量下载
 
-`funda download` 现在支持直接针对多个数据集批量抓取：
+`funda download` 支持直接针对多个数据集批量抓取：
 
 ```bash
 funda download --datasets income balancesheet cashflow forecast express \
@@ -71,6 +71,7 @@ recent_quarters: 4          # Refresh the most recent quarters (建议 2-4 覆�
 ```
 
 运行后输出位于 `data/<dataset>/year=YYYY/part-*.parquet`，增量状态默认写入 `data/_state/state.json`（JSON 后端），并滚动补齐最近 `recent_quarters` 个季度后继续增量下载。
+
 凡是下载列表中包含 `income` 的任务，会按照配置里的导出选项自动生成 `cumulative/single/annual` CSV；其他数据集保持 parquet 形式，可按需再运行 `funda export`。
 
 注意：`--raw-only`、`--build-only`、`--force` 仅适用于旧版利润表流程，若在多数据集模式中使用会被忽略或报错。若需统一产出目录，可在 `download`、`coverage`、`export` 命令中同时显式指定 `--data-dir`／`--dataset-root` 指向同一路径（如 `data`），避免默认值分别落在 `data/` 与 `out/` 造成混淆。
