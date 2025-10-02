@@ -234,7 +234,7 @@ funda coverage
 
 #### 数据导出成csv
 
-若已完成数据下载并且通过数据完整性检验确认后已有想要的数据，可用 `export` 构建按年度数据（指令：annual）/ 季度累计（指令：cumulative）/单季（指令：single）导出：
+一般来说，默认情况下，`funda download`指令会自动完成数据抓取-数据缓存-导出csv的全流程，如果想在曾经执行过下载指令并已生成缓存数据的情况下，也可以选择直接导出数据，也就是 `export` 构建按年度数据（指令：annual）/ 季度累计（指令：cumulative）/单季（指令：single）导出：
 
 * `dataset=fact_income_cum/year=YYYY/*.parquet`（最新快照）
 

@@ -60,7 +60,7 @@ datasets:
   - name: express           # Preliminary unaudited results
   - name: dividend          # Dividend information
   - name: fina_indicator    # Financial indicators
-  # - name: fina_audit        # Financial audit（需按股票循环，建议单独运行）
+  - name: fina_audit        # Financial audit（需按股票循环，建议单独运行）
   - name: fina_mainbz       # Financial main business
     type: ["P", "D", "I"]   # By product, domain, industry
   - name: disclosure_date   # Disclosure date
