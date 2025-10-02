@@ -49,25 +49,25 @@ funda download --datasets income balancesheet cashflow forecast express \
 
 ```yaml
 datasets:
-  - name: income            # Income statement
-    report_types: [1]       # Consolidated statement
-  - name: balancesheet      # Balance sheet
-    report_types: [1]       # Consolidated statement
-  - name: cashflow          # Cash flow statement
-    report_types: [1]       # Consolidated statement
-  - name: forecast          # Earnings preannouncement
-  - name: express           # Preliminary unaudited results
-  - name: dividend          # Dividend information
-  - name: fina_indicator    # Financial indicators
-  - name: fina_audit        # Financial audit
-  - name: fina_mainbz       # Financial main business
-    type: ["P", "D", "I"]   # By product, domain, industry
-  - name: disclosure_date   # Disclosure date
+  - name: income            # 利润表
+    report_types: [1]       # 报表类型：合并报表
+  - name: balancesheet      # 资产负债表
+    report_types: [1]       # 报表类型：合并报表
+  - name: cashflow          # 现金流量表
+    report_types: [1]       # 报表类型：合并报表
+  - name: forecast          # 业绩预告
+  - name: express           # 业绩快报
+  - name: dividend          # 分红信息
+  - name: fina_indicator    # 财务指标数据
+  - name: fina_audit        # 财务审计意见
+  - name: fina_mainbz       # 主营业务构成
+    type: ["P", "D", "I"]   # 按产品、领域、行业
+  - name: disclosure_date   # 财报披露计划
 data_dir: "data"
-use_vip: true               # Only the VIP version of Tushare token supports batch download
+use_vip: true               # 只有 Tushare VIP 版的 token 才支持批量下载
 max_per_minute: 90
 max_retries: 3
-recent_quarters: 4          # Refresh the most recent quarters (建议 2-4 覆盖常见改期)
+recent_quarters: 4          # 刷新最近的季度数 (建议 2-4 覆盖常见改期)
 ```
 
 运行后输出位于 `data/<dataset>/year=YYYY/part-*.parquet`，增量状态默认写入 `data/_state/state.json`（JSON 后端），并滚动补齐最近 `recent_quarters` 个季度后继续增量下载。
