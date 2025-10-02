@@ -3,6 +3,7 @@ import math
 import os
 import random
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from datetime import date
@@ -133,7 +134,9 @@ def load_yaml(path: Optional[str]) -> dict:
         )
         return {}
     if len(existing) > 1:
-        eprint("错误：检测到 config.yml 与 config.yaml 同时存在，请保留一个以保证唯一事实")
+        eprint(
+            "错误：检测到 config.yml 与 config.yaml 同时存在，请保留一个以保证唯一事实"
+        )
         sys.exit(2)
     return _read(existing[0])
 
@@ -184,6 +187,111 @@ def parse_report_types(value) -> List[int]:
     return [1]
 
 
+class _TokenClient:
+    """Internal helper for ``ProPool`` representing a single TuShare token."""
+
+    def __init__(self, token: str, rate: int) -> None:
+        import tushare as ts
+
+        self.token = token
+        self.max_per_minute = max(0, int(rate))
+        self.calls: List[float] = []
+        self._lock = threading.Lock()
+        self.pro = ts.pro_api(token=token)
+
+    def try_acquire(self, now: float) -> Tuple[bool, float]:
+        with self._lock:
+            window_start = now - 60
+            self.calls = [t for t in self.calls if t >= window_start]
+            if self.max_per_minute <= 0 or len(self.calls) < self.max_per_minute:
+                self.calls.append(now)
+                return True, 0.0
+            if not self.calls:
+                return False, 0.1
+            wait_for = 60 - (now - self.calls[0]) + 0.1
+            return False, max(wait_for, 0.05)
+
+    def set_rate(self, rate: int) -> None:
+        with self._lock:
+            self.max_per_minute = max(0, int(rate))
+            if self.max_per_minute == 0:
+                self.calls.clear()
+
+
+class ProPool:
+    """Round-robin wrapper that balances API calls across multiple tokens."""
+
+    __is_token_pool__ = True
+
+    def __init__(self, tokens: Sequence[str], per_token_rate: int = 90) -> None:
+        filtered: List[str] = []
+        for tok in tokens:
+            if tok and tok not in filtered:
+                filtered.append(tok)
+        if not filtered:
+            raise ValueError("ProPool requires at least one token")
+        self._clients = [_TokenClient(tok, per_token_rate) for tok in filtered]
+        self._lock = threading.Lock()
+        self._rr_index = 0
+        self._rate = max(0, int(per_token_rate))
+
+    def set_rate(self, rate: Optional[int]) -> None:
+        value = 0 if rate is None else max(0, int(rate))
+        self._rate = value
+        for client in self._clients:
+            client.set_rate(value)
+
+    def _acquire_client(self) -> _TokenClient:
+        if len(self._clients) == 1:
+            client = self._clients[0]
+            while True:
+                now = time.time()
+                acquired, wait = client.try_acquire(now)
+                if acquired:
+                    return client
+                time.sleep(max(wait, 0.05))
+        while True:
+            now = time.time()
+            with self._lock:
+                start = self._rr_index
+                self._rr_index = (self._rr_index + 1) % len(self._clients)
+                order = [
+                    self._clients[(start + i) % len(self._clients)]
+                    for i in range(len(self._clients))
+                ]
+            earliest_wait: Optional[float] = None
+            for client in order:
+                acquired, wait = client.try_acquire(now)
+                if acquired:
+                    return client
+                if earliest_wait is None or wait < earliest_wait:
+                    earliest_wait = wait
+            time.sleep(max(earliest_wait or 0.05, 0.05))
+
+    def query(self, *args: Any, **kwargs: Any):
+        client = self._acquire_client()
+        return client.pro.query(*args, **kwargs)
+
+    def __getattr__(self, name: str):
+        sample = getattr(self._clients[0].pro, name, None)
+        if callable(sample):
+
+            def _caller(*args: Any, **kwargs: Any):
+                client = self._acquire_client()
+                target = getattr(client.pro, name)
+                return target(*args, **kwargs)
+
+            return _caller
+        if sample is not None:
+            return sample
+
+        def _fallback(*args: Any, **kwargs: Any):
+            client = self._acquire_client()
+            return client.pro.query(name, *args, **kwargs)
+
+        return _fallback
+
+
 def init_pro_api(token: Optional[str]):
     token_env = os.getenv("TUSHARE_TOKEN")
     tok = token or token_env
@@ -193,6 +301,16 @@ def init_pro_api(token: Optional[str]):
         )
         sys.exit(2)
     try:
+        extra = os.getenv("TUSHARE_TOKEN_2")
+        tokens: List[str] = []
+        for candidate in (tok, extra):
+            if candidate and candidate not in tokens:
+                tokens.append(candidate)
+        if len(tokens) > 1:
+            pool = ProPool(tokens, per_token_rate=90)
+            global _GLOBAL_TOKEN
+            _GLOBAL_TOKEN = tokens[0]
+            return pool
         import tushare as ts
 
         ts.set_token(tok)
@@ -366,7 +484,7 @@ class RetryPolicy:
         return True
 
     def next_delay(self, retry_index: int) -> float:
-        base = min(self.base_delay * (2 ** retry_index), self.max_delay)
+        base = min(self.base_delay * (2**retry_index), self.max_delay)
         if self.jitter <= 0:
             return base
         low = base * max(0.0, 1 - self.jitter)
@@ -391,7 +509,9 @@ def call_with_retry(
     while True:
         try:
             return func()
-        except Exception as exc:  # pragma: no cover - error classification exercised in tests
+        except (
+            Exception
+        ) as exc:  # pragma: no cover - error classification exercised in tests
             if not used_policy.is_retryable(exc):
                 raise
             if retries >= used_policy.max_retries:
@@ -506,7 +626,9 @@ def _concat_non_empty(dfs: List[pd.DataFrame]) -> pd.DataFrame:
         return pd.DataFrame(columns=seen_order) if seen_order else pd.DataFrame()
     combined = pd.concat(kept, ignore_index=True, copy=False)
     if seen_order:
-        combined = combined.loc[:, [col for col in seen_order if col in combined.columns]]
+        combined = combined.loc[
+            :, [col for col in seen_order if col in combined.columns]
+        ]
     return combined
 
 
@@ -637,7 +759,9 @@ def fetch_income_bulk(
                 else:
                     call = partial(pro.income_vip, **params)
 
-                def _log_retry(attempt: int, exc: Exception, wait_seconds: float) -> None:
+                def _log_retry(
+                    attempt: int, exc: Exception, wait_seconds: float
+                ) -> None:
                     eprint(
                         "警告："
                         f"income_vip 期末 {per} report_type {rt} 异常，"
@@ -652,10 +776,7 @@ def fetch_income_bulk(
                 )
             except RetryExhaustedError as exc:
                 last_exc = exc.last_exception
-                eprint(
-                    "警告："
-                    f"期末 {per} report_type {rt} 多次重试仍失败：{last_exc}"
-                )
+                eprint(f"警告：期末 {per} report_type {rt} 多次重试仍失败：{last_exc}")
                 continue
             except Exception as exc:
                 eprint(f"警告：期末 {per} report_type {rt} 拉取失败：{exc}")
@@ -666,9 +787,7 @@ def fetch_income_bulk(
                 if per > future_limit:
                     reason = "未来期间未披露"
                 elif codes_missing and len(codes_missing) > 0:
-                    reason = (
-                        f"报告口径缺失，涉及 {len(codes_missing)} 个 ts_code"
-                    )
+                    reason = f"报告口径缺失，涉及 {len(codes_missing)} 个 ts_code"
                 elif pair in refresh_lookup:
                     reason = "滚动刷新：暂无新增"
                 elif codes_missing is not None:
@@ -677,9 +796,7 @@ def fetch_income_bulk(
                     reason = "初次下载暂未返回（可能上市前）"
                 else:
                     reason = "接口返回为空"
-                eprint(
-                    f"警告：期末 {per} report_type {rt} 无返回：{reason}"
-                )
+                eprint(f"警告：期末 {per} report_type {rt} 无返回：{reason}")
                 continue
             df = df.copy()
             df["retrieved_at"] = pd.Timestamp.utcnow()
@@ -981,7 +1098,9 @@ def _load_raw_snapshot(
     return None, None
 
 
-def build_datasets_from_raw(outdir: str, prefix: str, raw_format: str = "parquet") -> bool:
+def build_datasets_from_raw(
+    outdir: str, prefix: str, raw_format: str = "parquet"
+) -> bool:
     """Build inventory and fact datasets from the cached raw table.
 
     Returns ``True`` when datasets are successfully materialised; ``False`` when
@@ -1101,7 +1220,13 @@ def build_income_export_tables(
                         for c in annual.columns
                         if c
                         not in set(
-                            ["ts_code", "end_date", *FLOW_FIELDS, "ann_date", "f_ann_date"]
+                            [
+                                "ts_code",
+                                "end_date",
+                                *FLOW_FIELDS,
+                                "ann_date",
+                                "f_ann_date",
+                            ]
                         )
                     ]
                 )
@@ -1119,10 +1244,7 @@ def _run_bulk_mode(
     if not _has_enough_credits(pro):
         total = _available_credits(pro)
         detected = "0" if total is None else repr(total)
-        eprint(
-            "错误：全市场批量需要至少 5000 积分。"
-            f"（检测到总积分：{detected}）"
-        )
+        eprint(f"错误：全市场批量需要至少 5000 积分。（检测到总积分：{detected}）")
         sys.exit(2)
     periods = _periods_from_cfg(cfg)
     base = f"{prefix}_vip_quarterly"
@@ -1144,9 +1266,7 @@ def _run_bulk_mode(
         eprint("错误：无下载计划且缺少历史数据，请调整参数后重试")
         sys.exit(2)
     refresh_pairs = planned_pairs - missing_pairs
-    fetch_pairs = (
-        missing_pairs if cfg.get("skip_existing") else planned_pairs
-    )
+    fetch_pairs = missing_pairs if cfg.get("skip_existing") else planned_pairs
     if fetch_pairs:
         period_list = sorted({per for per, _ in fetch_pairs})
         print(

@@ -308,7 +308,9 @@ def write_parquet_dataset(  # noqa: C901
         existing = pd.DataFrame()
         if target_dir.exists():
             try:
-                tables = [pq.read_table(p.as_posix()) for p in target_dir.glob("*.parquet")]
+                tables = [
+                    pq.read_table(p.as_posix()) for p in target_dir.glob("*.parquet")
+                ]
                 if tables:
                     existing = pa.concat_tables(tables).to_pandas()
             except Exception as exc:  # pragma: no cover - I/O errors
@@ -460,13 +462,16 @@ class MarketDatasetDownloader:
         self.pro = pro
         self.data_dir = data_dir
         self.use_vip = use_vip
-        self.limiter = RateLimiter(max_per_minute=max_per_minute)
+        if getattr(pro, "__is_token_pool__", False):
+            self.limiter = RateLimiter(max_per_minute=0)
+            if hasattr(pro, "set_rate"):
+                pro.set_rate(max_per_minute or 90)
+        else:
+            self.limiter = RateLimiter(max_per_minute=max_per_minute)
         self.allow_future = allow_future
         self.retry_policy = RetryPolicy(max_retries=max_retries)
         state_file = (
-            Path(state_path)
-            if state_path
-            else Path(data_dir) / "_state" / "state.json"
+            Path(state_path) if state_path else Path(data_dir) / "_state" / "state.json"
         )
         self.state = state_backend or JsonStateBackend(state_file)
 
@@ -486,10 +491,7 @@ class MarketDatasetDownloader:
             spec = self._spec_for(req.name)
             print(f"[{datetime.now()}] >>> 抓取 {spec.name}")
             if spec.requires_ts_code:
-                print(
-                    "提示："
-                    f"{spec.name} 仅支持按股票循环，本次将枚举 ts_code"
-                )
+                print(f"提示：{spec.name} 仅支持按股票循环，本次将枚举 ts_code")
             self._download_dataset(
                 spec,
                 req.options,
@@ -636,8 +638,7 @@ class MarketDatasetDownloader:
             for entry in accumulator.failures:
                 periods = ", ".join(entry["periods"])
                 print(
-                    "提示："
-                    f"{spec.name} {entry['ts_code']} 未成功的 period: {periods}"
+                    f"提示：{spec.name} {entry['ts_code']} 未成功的 period: {periods}"
                 )
 
     def _run_periodic_combo(
@@ -872,8 +873,7 @@ class MarketDatasetDownloader:
             self.state.set(spec.name, state_key, last_completed)
             if failed_windows:
                 print(
-                    "提示："
-                    f"{spec.name} 部分窗口抓取失败：{', '.join(failed_windows)}"
+                    f"提示：{spec.name} 部分窗口抓取失败：{', '.join(failed_windows)}"
                 )
 
     def _resolve_report_types(
@@ -944,9 +944,7 @@ class MarketDatasetDownloader:
         frames: List[pd.DataFrame] = []
         for file in sorted(root.rglob("*.parquet")):
             try:
-                frames.append(
-                    pd.read_parquet(file, columns=["ts_code", "end_date"])
-                )
+                frames.append(pd.read_parquet(file, columns=["ts_code", "end_date"]))
             except Exception as exc:  # pragma: no cover - defensive I/O
                 print(f"警告：读取 {file} 失败：{exc}")
         if not frames:
@@ -992,9 +990,7 @@ class MarketDatasetDownloader:
             return None
         return text
 
-    def _max_period(
-        self, value: Optional[str], floor: Optional[str]
-    ) -> Optional[str]:
+    def _max_period(self, value: Optional[str], floor: Optional[str]) -> Optional[str]:
         if value is None:
             return floor
         if floor is None:
@@ -1032,9 +1028,7 @@ class MarketDatasetDownloader:
     def _resolve_method(self, spec: DatasetSpec) -> Tuple[str, bool]:
         vip = spec.vip_api if self.use_vip else None
         method_name = vip or spec.api
-        paginate = (
-            spec.vip_supports_pagination if vip else spec.api_supports_pagination
-        )
+        paginate = spec.vip_supports_pagination if vip else spec.api_supports_pagination
         return method_name, paginate
 
     def _bounded_period_end(self, end_date: str) -> str:
@@ -1191,9 +1185,7 @@ class MarketDatasetDownloader:
             if not rows:
                 return pd.DataFrame()
             if page_limit_hit:
-                print(
-                    f"警告：调用 {api_name} 达到分页上限 {MAX_PAGES}，结果可能被截断"
-                )
+                print(f"警告：调用 {api_name} 达到分页上限 {MAX_PAGES}，结果可能被截断")
             return _concat_non_empty(rows)
 
         try:
