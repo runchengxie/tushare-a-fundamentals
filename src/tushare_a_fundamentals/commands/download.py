@@ -8,12 +8,9 @@ import pandas as pd
 
 from ..common import (
     DEFAULT_FIELDS,
-    _check_parquet_dependency,
     _concat_non_empty,
     _export_tables,
     _periods_from_cfg,
-    _run_bulk_mode,
-    build_datasets_from_raw,
     build_income_export_tables,
     ensure_ts_code,
     eprint,
@@ -39,10 +36,9 @@ def _download_defaults() -> dict:
         "since": None,
         "until": None,
         "fields": ",".join(DEFAULT_FIELDS),
-        "outdir": "out",
+        "outdir": None,
         "prefix": "income",
         "format": "parquet",
-        "skip_existing": False,
         "token": None,
         "report_types": [1],
         "allow_future": False,
@@ -95,14 +91,6 @@ def _collect_cli_overrides(args: argparse.Namespace) -> dict:
     if getattr(args, "no_export", False):
         overrides["export_enabled"] = False
     return overrides
-
-
-def _resolve_raw_format(cfg: dict) -> str:
-    fmt = cfg.get("format", "parquet")
-    if fmt == "parquet" and not _check_parquet_dependency():
-        eprint("警告：缺少 pyarrow 或 fastparquet，已回退到 csv 格式")
-        return "csv"
-    return fmt
 
 
 def _build_export_args(cfg: dict, outdir: str, prefix: str) -> Namespace | None:
@@ -175,7 +163,8 @@ def _export_income_from_multi(cfg: dict, data_dir: str, requests) -> None:
     dataset_names = {req.name for req in requests}
     if "income" not in dataset_names:
         return
-    outdir = cfg.get("outdir") or "out"
+    data_dir = cfg.get("data_dir") or "data"
+    outdir = cfg.get("outdir") or data_dir
     prefix = cfg.get("prefix") or "income"
     export_args = _build_export_args(cfg, outdir, prefix)
     if export_args is None:
@@ -235,15 +224,11 @@ def cmd_download(args: argparse.Namespace) -> None:
     for msg in info_msgs:
         print(msg)
 
-    if dataset_requests:
-        _run_multi_dataset_flow(
-            cfg,
-            args,
-            dataset_requests,
-            use_vip=use_vip,
-        )
-        return
-    _run_single_dataset_flow(cfg, args)
+    _run_multi_dataset_flow(
+        cfg,
+        dataset_requests,
+        use_vip=use_vip,
+    )
 
 
 AUDIT_DATASET_NAME = "fina_audit"
@@ -420,17 +405,10 @@ def _build_dataset_plan(
 
 def _run_multi_dataset_flow(
     cfg: dict,
-    args: argparse.Namespace,
     dataset_requests: list[DatasetRequest],
     *,
     use_vip: bool,
 ) -> None:
-    if getattr(args, "force", False):
-        eprint("警告：多数据集模式暂不支持 --force，将忽略该参数")
-    if getattr(args, "raw_only", False) or getattr(args, "build_only", False):
-        eprint("错误：多数据集模式不支持 --raw-only 或 --build-only")
-        sys.exit(2)
-
     pro = init_pro_api(cfg.get("token"))
     data_dir = cfg.get("data_dir") or "data"
     max_per_minute = cfg.get("max_per_minute")
@@ -466,30 +444,3 @@ def _run_multi_dataset_flow(
         refresh_periods=int(cfg.get("recent_quarters") or 0),
     )
     _export_income_from_multi(cfg, data_dir, dataset_requests)
-
-
-def _run_single_dataset_flow(cfg: dict, args: argparse.Namespace) -> None:
-    raw_only = getattr(args, "raw_only", False)
-    build_only = getattr(args, "build_only", False)
-    if raw_only and build_only:
-        eprint("错误：--raw-only 与 --build-only 互斥")
-        sys.exit(2)
-    if getattr(args, "force", False):
-        cfg["skip_existing"] = False
-
-    outdir = cfg["outdir"]
-    prefix = cfg["prefix"]
-    raw_fmt = cfg.get("format", "parquet")
-
-    if not build_only:
-        pro = init_pro_api(cfg.get("token"))
-        fields = cfg["fields"]
-        raw_fmt = _resolve_raw_format(cfg)
-        _run_bulk_mode(pro, cfg, fields, raw_fmt, outdir, prefix)
-
-    built = False
-    if not raw_only:
-        built = build_datasets_from_raw(outdir, prefix, raw_format=raw_fmt)
-    export_args = _build_export_args(cfg, outdir, prefix) if built else None
-    if export_args is not None:
-        _run_export(export_args, strict=cfg.get("export_strict"))

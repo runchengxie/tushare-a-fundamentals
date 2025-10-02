@@ -7,7 +7,7 @@ import tushare_a_fundamentals.commands.download as download_cmd
 pytestmark = pytest.mark.unit
 
 
-def test_cmd_download_multi_dataset_uses_configured_years(monkeypatch):
+def test_cmd_download_multi_dataset_uses_configured_years(monkeypatch, tmp_path):
     captured = {}
 
     class DummyDownloader:
@@ -39,7 +39,7 @@ def test_cmd_download_multi_dataset_uses_configured_years(monkeypatch):
         report_types=None,
         allow_future=False,
         recent_quarters=None,
-        data_dir=None,
+        data_dir=str(tmp_path),
         use_vip=None,
         max_per_minute=None,
         state_path=None,
@@ -50,12 +50,8 @@ def test_cmd_download_multi_dataset_uses_configured_years(monkeypatch):
         export_years=None,
         export_strict=None,
         export_enabled=None,
-        no_export=False,
+        no_export=True,
         max_retries=None,
-        force=False,
-        raw_only=False,
-        build_only=False,
-        skip_existing=None,
     )
 
     download_cmd.cmd_download(args)

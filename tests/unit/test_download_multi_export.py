@@ -9,10 +9,8 @@ from tushare_a_fundamentals.downloader import DatasetRequest
 pytestmark = pytest.mark.unit
 
 
-def test_export_income_from_multi(tmp_path):
+def test_export_income_from_multi(tmp_path, monkeypatch):
     data_dir = tmp_path / "data"
-    income_year = data_dir / "income" / "year=2023"
-    income_year.mkdir(parents=True)
     df = pd.DataFrame(
         {
             "ts_code": ["000001.SZ", "000001.SZ"],
@@ -22,8 +20,11 @@ def test_export_income_from_multi(tmp_path):
             "f_ann_date": ["20230411", "20230711"],
         }
     )
-    df.to_parquet(income_year / "part.parquet", index=False)
-
+    monkeypatch.setattr(
+        dlmod,
+        "_load_dataset_from_data_dir",
+        lambda root, dataset: df.copy(),
+    )
     cfg = dlmod._download_defaults()
     cfg.update(
         {
