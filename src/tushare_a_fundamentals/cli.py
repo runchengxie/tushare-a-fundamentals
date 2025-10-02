@@ -1,6 +1,10 @@
 import argparse
+import sys
 
-from .common import eprint
+from .common import eprint, init_pro_api as _init_pro_api
+
+# Re-export init_pro_api for tests that patch it at the CLI module level.
+init_pro_api = _init_pro_api
 
 
 def parse_cli() -> argparse.Namespace:
@@ -222,19 +226,23 @@ def parse_cli() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_cli()
-    if getattr(args, "cmd", None) == "download":
+    cmd = getattr(args, "cmd", None)
+    if cmd is None and len(sys.argv) > 1:
+        cmd = "download"
+
+    if cmd == "download":
         from .commands.download import cmd_download
 
         return cmd_download(args)
-    if getattr(args, "cmd", None) == "export":
+    if cmd == "export":
         from .commands.export import cmd_export
 
         return cmd_export(args)
-    if getattr(args, "cmd", None) == "coverage":
+    if cmd == "coverage":
         from .commands.coverage import cmd_coverage
 
         return cmd_coverage(args)
-    if getattr(args, "cmd", None) == "state":
+    if cmd == "state":
         from .commands.state import cmd_state
 
         return cmd_state(args)
