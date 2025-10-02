@@ -31,11 +31,14 @@
 ## 最小可行步骤
 
 ```bash
-cp .env.example .env   # 填好 TUSHARE_TOKEN
-funda download         # 批量调度下载，缓存，并导出CSV
+cp .env.example .env        # 填好 TUSHARE_TOKEN
+funda download              # 批量除了审计意见以外的所有数据下载，缓存，并导出CSV
+funda download --audit-only # 审计意见由于需要逐个个股遍历，运行时间较长，单独运行
 ```
 
 提示：缺少 `config.yml/config.yaml` 时会自动使用默认参数；日志会提示可以复制模板来自定义。
+
+或者愿意长时间等待也可以`funda download --with-audit`，将进行默认包括审计意见数据在内的全量下载
 
 ### 多数据集批量下载
 
