@@ -81,3 +81,4 @@ def test_cmd_download_runs_export_when_enabled(monkeypatch, tmp_path):
     assert ns.gzip is False
     assert ns.no_income is False
     assert ns.no_flat is False
+    assert ns.progress == "auto"

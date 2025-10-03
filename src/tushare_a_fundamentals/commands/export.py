@@ -6,7 +6,7 @@ import itertools
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Optional
 
 import pandas as pd
 import pyarrow as pa
@@ -22,6 +22,7 @@ from ..common import (
     ensure_ts_code,
     eprint,
 )
+from ..progress import ProgressManager
 
 
 @dataclass
@@ -57,6 +58,7 @@ class ExportOptions:
 
 def cmd_export(args: argparse.Namespace) -> None:
     opts = _options_from_args(args)
+    progress = ProgressManager(getattr(args, "progress", "auto"))
     if not opts.include_income and not opts.include_flat:
         eprint("错误：未选择任何导出目标（--no-income 与 --no-flat 同时启用）")
         sys.exit(2)
@@ -65,11 +67,12 @@ def cmd_export(args: argparse.Namespace) -> None:
         sys.exit(2)
 
     exported_any = False
-    if opts.include_income:
-        exported_any = _export_income(opts) or exported_any
-    if opts.include_flat:
-        flat_count = _export_flat_datasets(opts)
-        exported_any = flat_count > 0 or exported_any
+    with progress.live():
+        if opts.include_income:
+            exported_any = _export_income(opts) or exported_any
+        if opts.include_flat:
+            flat_count = _export_flat_datasets(opts, progress)
+            exported_any = flat_count > 0 or exported_any
 
     if not exported_any:
         eprint("提示：未执行任何导出任务，请检查数据目录或参数配置。")
@@ -169,7 +172,9 @@ def _load_dataset_as_frame(root: Path, name: str) -> pd.DataFrame:
     return ensure_ts_code(combined, context=name)
 
 
-def _export_flat_datasets(opts: ExportOptions) -> int:
+def _export_flat_datasets(
+    opts: ExportOptions, progress: Optional[ProgressManager] = None
+) -> int:
     datasets = opts.flat_datasets
     if datasets is None:
         datasets = _discover_datasets(opts.dataset_root)
@@ -179,8 +184,11 @@ def _export_flat_datasets(opts: ExportOptions) -> int:
         return 0
 
     total_exports = 0
+    task = progress.add_task(f"导出平面数据集（共 {len(datasets)} 个）", len(datasets)) if progress else None
     for name in datasets:
-        total_exports += _export_single_dataset(opts, name)
+        total_exports += _export_single_dataset(opts, name, progress)
+        if progress is not None:
+            progress.advance(task, 1)
     return total_exports
 
 
@@ -219,7 +227,11 @@ def _unique_preserve_order(values: Iterable[str]) -> list[str]:
     return result
 
 
-def _export_single_dataset(opts: ExportOptions, name: str) -> int:
+def _export_single_dataset(
+    opts: ExportOptions,
+    name: str,
+    progress: Optional[ProgressManager] = None,
+) -> int:
     source = opts.dataset_root / name
     if not source.exists():
         eprint(f"提示：跳过 {name}，目录不存在：{source}")
@@ -229,24 +241,29 @@ def _export_single_dataset(opts: ExportOptions, name: str) -> int:
         if opts.split_by == "year":
             partitions = sorted(p for p in source.glob("year=*") if p.is_dir())
             if not partitions:
-                return int(_write_dataset(source, opts, name))
+                return int(_write_dataset(source, opts, name, progress))
             written = 0
             for part in partitions:
                 year = part.name.split("=", 1)[1] if "=" in part.name else part.name
                 base = f"{name}_{year or 'unknown'}"
-                if _write_dataset(part, opts, base):
+                if _write_dataset(part, opts, base, progress):
                     written += 1
             if written == 0:
                 eprint(f"提示：{name} 的年度分区无可导出数据，已跳过")
             return written
 
-        return int(_write_dataset(source, opts, name))
+        return int(_write_dataset(source, opts, name, progress))
     except (OSError, ValueError) as exc:
         eprint(f"警告：读取 {source} 失败：{exc}")
         return 0
 
 
-def _write_dataset(source: Path, opts: ExportOptions, base_name: str) -> bool:
+def _write_dataset(
+    source: Path,
+    opts: ExportOptions,
+    base_name: str,
+    progress: Optional[ProgressManager] = None,
+) -> bool:
     try:
         partitioning = ds.partitioning(
             pa.schema([pa.field("year", pa.string())]), flavor="hive"
@@ -294,8 +311,15 @@ def _write_dataset(source: Path, opts: ExportOptions, base_name: str) -> bool:
         if writer is not None:
             writer.close()
 
-    print(f"已保存：{out_path}")
+    _log_progress(progress, f"已保存：{out_path}")
     return True
+
+
+def _log_progress(progress: Optional[ProgressManager], message: str) -> None:
+    if progress is not None and progress.is_active:
+        progress.log(message)
+    else:
+        print(message)
 
 
 def _build_output_path(target_dir: Path, base: str, fmt: str, gzip_enabled: bool) -> Path:

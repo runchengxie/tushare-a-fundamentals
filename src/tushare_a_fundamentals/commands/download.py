@@ -50,6 +50,7 @@ def _download_defaults() -> dict:
         "export_years": None,
         "export_strict": False,
         "max_retries": 3,
+        "progress": "auto",
     }
 
 
@@ -79,6 +80,7 @@ def _collect_cli_overrides(args: argparse.Namespace) -> dict:
         "export_years": getattr(args, "export_years", None),
         "export_strict": getattr(args, "export_strict", None),
         "max_retries": getattr(args, "max_retries", None),
+        "progress": getattr(args, "progress", None),
     }
     if getattr(args, "export_enabled", None) is not None:
         overrides["export_enabled"] = getattr(args, "export_enabled")
@@ -125,6 +127,7 @@ def _build_export_args(cfg: dict) -> Namespace | None:
         gzip=bool(cfg.get("export_gzip", False)),
         no_income=bool(cfg.get("export_no_income", False)),
         no_flat=bool(cfg.get("export_no_flat", False)),
+        progress=cfg.get("progress", "auto"),
     )
 
 
@@ -151,6 +154,10 @@ def cmd_download(args: argparse.Namespace) -> None:
     cfg = merge_config(cli_overrides, cfg_file, defaults)
     cfg["report_types"] = parse_report_types(cfg.get("report_types"))
     cfg["fields"] = normalize_fields(cfg.get("fields"))
+    raw_progress = str(cfg.get("progress", "auto") or "auto").strip().lower()
+    if raw_progress not in {"auto", "rich", "plain", "none"}:
+        raw_progress = "auto"
+    cfg["progress"] = raw_progress
     try:
         max_retries = int(cfg.get("max_retries", 3))
     except (TypeError, ValueError):
@@ -394,6 +401,7 @@ def _run_multi_dataset_flow(
         state_path=cfg.get("state_path"),
         allow_future=bool(cfg.get("allow_future")),
         max_retries=int(cfg.get("max_retries", 3)),
+        progress_mode=cfg.get("progress", "auto"),
     )
 
     downloader.run(
