@@ -16,7 +16,7 @@ def _prepare_sort_keys(df: pd.DataFrame) -> list[str]:
     # prefer f_ann_date over ann_date if both exist
     for col in ("f_ann_date", "ann_date"):
         if col in df.columns:
-            df[col] = pd.to_datetime(df[col], errors="coerce")
+            df[col] = pd.to_datetime(df[col], format="%Y%m%d", errors="coerce")
             sort_cols.append(col)
     return sort_cols
 

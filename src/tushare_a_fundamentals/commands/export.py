@@ -248,8 +248,13 @@ def _export_single_dataset(opts: ExportOptions, name: str) -> int:
 
 def _write_dataset(source: Path, opts: ExportOptions, base_name: str) -> bool:
     try:
-        dataset = ds.dataset(source.as_posix(), format="parquet", partitioning="hive")
-    except (FileNotFoundError, ValueError, pa.ArrowInvalid):
+        partitioning = ds.partitioning(
+            pa.schema([pa.field("year", pa.string())]), flavor="hive"
+        )
+        dataset = ds.dataset(
+            source.as_posix(), format="parquet", partitioning=partitioning
+        )
+    except (FileNotFoundError, ValueError, pa.ArrowInvalid, pa.ArrowTypeError):
         return False
 
     scanner = ds.Scanner.from_dataset(dataset)
