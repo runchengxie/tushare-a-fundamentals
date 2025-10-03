@@ -147,6 +147,27 @@ def _run_export(export_args: Namespace, strict: bool | None) -> None:
 def cmd_download(args: argparse.Namespace) -> None:
     cfg_file = load_yaml(getattr(args, "config", None))
     defaults = _download_defaults()
+    if getattr(args, "audit_only", False):
+        period_flag_names = ("since", "until", "quarters", "years")
+
+        def _provided(value: object) -> bool:
+            if value is None:
+                return False
+            if isinstance(value, str):
+                return bool(value.strip())
+            return True
+
+        cli_has_window = any(
+            _provided(getattr(args, name, None)) for name in period_flag_names
+        )
+        cfg_has_window = False
+        if isinstance(cfg_file, dict):
+            for name in period_flag_names:
+                if _provided(cfg_file.get(name)):
+                    cfg_has_window = True
+                    break
+        if not cli_has_window and not cfg_has_window:
+            defaults["quarters"] = 1
     cfg_missing = not bool(cfg_file)
     if cfg_missing:
         defaults["datasets"] = DEFAULT_DATASET_CONFIG
