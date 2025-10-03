@@ -93,6 +93,25 @@ recent_quarters: 4          # 刷新最近的季度数 (建议 2-4 覆盖常见�
 
 3. 查看/维护增量状态与失败清单：`funda state show|clear|ls-failures`
 
+### 进度展示
+
+下载和导出都可能需要较长时间，默认会根据终端能力自动选择进度输出：
+
+```bash
+# 默认 auto：TTY 下显示 Rich 进度条，重定向/CI 时退化为纯文本节奏提示
+funda download --progress auto
+
+# 固定使用 Rich 进度条或强制纯文本/关闭进度
+funda download --progress rich
+funda download --progress plain
+funda download --progress none
+
+# 导出命令同样支持 --progress
+funda export --progress plain
+```
+
+在进度条模式下，命令会展示任务总数、成功/失败计数和预计剩余时间；纯文本模式则每隔约 1.5 秒输出一次累计进度，兼容日志采集与重定向场景。
+
 ### 状态后端与 CLI 限制
 
 * 默认状态后端：

@@ -92,6 +92,12 @@ def parse_cli() -> argparse.Namespace:
         action="store_true",
         help="跳过平面导出，仅构建 income 派生表",
     )
+    sp_exp.add_argument(
+        "--progress",
+        choices=["auto", "rich", "plain", "none"],
+        default="auto",
+        help="进度展示模式：auto/rich/plain/none（默认 auto）",
+    )
 
     sp_cov = sub.add_parser("coverage", help="盘点已覆盖的股票×期末日")
     sp_cov.add_argument(
@@ -191,6 +197,12 @@ def parse_cli() -> argparse.Namespace:
         dest="max_per_minute",
         type=int,
         help="接口每分钟最大调用次数（默认 90）",
+    )
+    sp_dl.add_argument(
+        "--progress",
+        choices=["auto", "rich", "plain", "none"],
+        default="auto",
+        help="进度展示模式：auto/rich/plain/none（默认 auto）",
     )
     vip_toggle = sp_dl.add_mutually_exclusive_group()
     vip_toggle.add_argument(

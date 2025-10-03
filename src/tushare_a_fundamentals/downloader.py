@@ -27,6 +27,7 @@ from .common import (
 )
 from .state_backend import JsonStateBackend, StateBackend
 from .transforms.deduplicate import mark_latest
+from .progress import ProgressManager
 
 DATE_FMT = "%Y%m%d"
 MAX_PAGES = 200
@@ -476,6 +477,7 @@ class MarketDatasetDownloader:
         allow_future: bool = False,
         max_retries: int = 3,
         flush_threshold_rows: int = FRAME_FLUSH_THRESHOLD_ROWS,
+        progress_mode: str = "auto",
     ) -> None:
         self.pro = pro
         self.vip_pro = vip_pro
@@ -497,6 +499,28 @@ class MarketDatasetDownloader:
             Path(state_path) if state_path else Path(data_dir) / "_state" / "state.json"
         )
         self.state = state_backend or JsonStateBackend(state_file)
+        self.progress = ProgressManager(progress_mode)
+
+    def _log(self, message: str) -> None:
+        self.progress.log(message)
+
+    def _start_task(self, description: str, total: int) -> Any:
+        return self.progress.add_task(description, total)
+
+    def _combo_task_label(
+        self,
+        spec: DatasetSpec,
+        combo: PeriodCombination,
+        *,
+        ts_code: Optional[str] = None,
+    ) -> str:
+        parts = [spec.name]
+        combo_desc = combo.describe(spec)
+        if combo_desc and combo_desc != "默认组合":
+            parts.append(combo_desc)
+        if ts_code:
+            parts.append(ts_code)
+        return " ".join(parts)
 
     def _ensure_limiter(self, client: Any) -> RateLimiter:
         key = id(client)
@@ -528,19 +552,24 @@ class MarketDatasetDownloader:
             raise ValueError("datasets 列表不能为空")
         end_date = parse_yyyymmdd(end) or today_yyyymmdd()
         start_date = parse_yyyymmdd(start)
-        for req in requests:
-            spec = self._spec_for(req.name)
-            print(f"[{datetime.now()}] >>> 抓取 {spec.name}")
-            if spec.requires_ts_code:
-                print(f"提示：{spec.name} 仅支持按股票循环，本次将枚举 ts_code")
-            self._download_dataset(
-                spec,
-                req.options,
-                start_date,
-                end_date,
-                refresh_periods,
+        with self.progress.live():
+            dataset_task = self._start_task(
+                f"数据集任务（共 {len(requests)} 个）", len(requests)
             )
-            print(f"[{datetime.now()}] <<< 完成 {spec.name}")
+            for req in requests:
+                spec = self._spec_for(req.name)
+                self._log(f"[{datetime.now()}] >>> 抓取 {spec.name}")
+                if spec.requires_ts_code:
+                    self._log(f"提示：{spec.name} 仅支持按股票循环，本次将枚举 ts_code")
+                self._download_dataset(
+                    spec,
+                    req.options,
+                    start_date,
+                    end_date,
+                    refresh_periods,
+                )
+                self._log(f"[{datetime.now()}] <<< 完成 {spec.name}")
+                self.progress.advance(dataset_task, 1)
 
     def _spec_for(self, name: str) -> DatasetSpec:
         if name not in DATASET_SPECS:
@@ -648,7 +677,7 @@ class MarketDatasetDownloader:
             raise ValueError(f"{spec.name} 缺少 period_field，无法按股票抓取")
         stock_df = self._resolve_stock_universe(options)
         if stock_df.empty:
-            print(f"警告：{spec.name} 未找到可用股票清单，已跳过")
+            self._log(f"警告：{spec.name} 未找到可用股票清单，已跳过")
             return
         report_types = self._resolve_report_types(spec, options)
         type_values = self._resolve_type_values(spec, options)
@@ -657,6 +686,9 @@ class MarketDatasetDownloader:
         period_end = self._bounded_period_end(end_date)
         accumulator = DownloadAccumulator()
         write_ok = True
+        stock_task = self._start_task(
+            f"{spec.name} 股票循环", len(stock_df.index)
+        )
         for _, row in stock_df.iterrows():
             ts_code = str(row.get("ts_code", "")).strip()
             if not ts_code:
@@ -677,6 +709,7 @@ class MarketDatasetDownloader:
             accumulator.merge(stock_result)
             if self._should_flush(accumulator):
                 write_ok = write_ok and self._flush_accumulator(accumulator, spec)
+            self.progress.advance(stock_task, 1)
 
         write_ok = write_ok and self._flush_accumulator(accumulator, spec)
         failure_entries = accumulator.failures
@@ -711,8 +744,17 @@ class MarketDatasetDownloader:
         periods = quarter_periods(effective_start, period_end)
         if not periods:
             return result
+        combo_task = self._start_task(
+            f"{self._combo_task_label(spec, combo)}", len(periods)
+        )
         outcome = self._collect_periods(
-            spec, periods, combo, client, method_name, paginate
+            spec,
+            periods,
+            combo,
+            client,
+            method_name,
+            paginate,
+            progress_task=combo_task,
         )
         if outcome.frames:
             result.frames.extend(outcome.frames)
@@ -799,6 +841,12 @@ class MarketDatasetDownloader:
         truncated: List[Dict[str, Any]] = []
         failure_seen = False
         last_contiguous: Optional[str] = None
+        combo_task = self._start_task(
+            f"{self._combo_task_label(spec, combo, ts_code=ts_code)}",
+            len(periods),
+        )
+        success_count = 0
+        fail_count = 0
         for period_value in periods:
             frame, success = self._call_stock_period(
                 spec,
@@ -812,12 +860,15 @@ class MarketDatasetDownloader:
             if not success:
                 failure_seen = True
                 failed_periods.append(period_value)
-                print(
-                    "警告："
-                    f"{spec.name} {combo_desc} 针对 {ts_code} "
-                    f"在 {period_value} 抓取失败，请稍后手动排查"
+                self._log(
+                    f"警告：{spec.name} {combo_desc} 针对 {ts_code} 在 {period_value} 抓取失败，请稍后手动排查"
+                )
+                fail_count += 1
+                self.progress.advance(
+                    combo_task, 1, ok=success_count, fail=fail_count
                 )
                 continue
+            success_count += 1
             if not failure_seen:
                 last_contiguous = period_value
             if frame is not None:
@@ -828,6 +879,7 @@ class MarketDatasetDownloader:
                     truncated.append(info)
                 if not frame.empty:
                     result.frames.append(frame)
+            self.progress.advance(combo_task, 1, ok=success_count, fail=fail_count)
         if last_contiguous is not None:
             result.updates.append((spec.name, state_key, last_contiguous))
         if failed_periods or truncated:
@@ -995,13 +1047,13 @@ class MarketDatasetDownloader:
             prefix = " ".join(parts)
             if failed_periods:
                 failed = ", ".join(failed_periods)
-                print(f"提示：{prefix} 未成功的 period: {failed}")
+                self._log(f"提示：{prefix} 未成功的 period: {failed}")
             for trunc in truncated:
                 period = trunc.get("period")
                 if period:
-                    print(f"提示：{prefix} 在 {period} 分页达到上限，详见失败记录")
+                    self._log(f"提示：{prefix} 在 {period} 分页达到上限，详见失败记录")
                 else:
-                    print(f"提示：{prefix} 分页达到上限，详见失败记录")
+                    self._log(f"提示：{prefix} 分页达到上限，详见失败记录")
 
     def _print_calendar_failures(
         self, spec: DatasetSpec, failures: Sequence[Dict[str, Any]]
@@ -1010,9 +1062,9 @@ class MarketDatasetDownloader:
             window = entry.get("window")
             status = entry.get("status")
             if status == "failed" and window:
-                print(f"提示：{spec.name} 窗口 {window} 抓取失败")
+                self._log(f"提示：{spec.name} 窗口 {window} 抓取失败")
             if entry.get("truncated") and window:
-                print(f"提示：{spec.name} 窗口 {window} 分页达到上限，详见失败记录")
+                self._log(f"提示：{spec.name} 窗口 {window} 分页达到上限，详见失败记录")
 
     def _extract_truncation_metadata(
         self,
@@ -1074,10 +1126,10 @@ class MarketDatasetDownloader:
         extra = sorted(field for field in actual - expected)
         key = (api_name, fields)
         if missing and key not in self._field_missing_logged:
-            print(f"警告：调用 {api_name} 返回缺少字段：{', '.join(missing)}")
+            self._log(f"警告：调用 {api_name} 返回缺少字段：{', '.join(missing)}")
             self._field_missing_logged.add(key)
         if extra and key not in self._field_extra_logged:
-            print(f"提示：调用 {api_name} 返回新增字段：{', '.join(extra)}")
+            self._log(f"提示：调用 {api_name} 返回新增字段：{', '.join(extra)}")
             self._field_extra_logged.add(key)
 
     def _resolve_report_types(
@@ -1150,7 +1202,7 @@ class MarketDatasetDownloader:
             try:
                 frames.append(pd.read_parquet(file, columns=["ts_code", "end_date"]))
             except Exception as exc:  # pragma: no cover - defensive I/O
-                print(f"警告：读取 {file} 失败：{exc}")
+                self._log(f"警告：读取 {file} 失败：{exc}")
         if not frames:
             return None
         combined = _concat_non_empty(frames)
@@ -1234,7 +1286,7 @@ class MarketDatasetDownloader:
         if self.use_vip and spec.vip_api:
             if self.vip_pro is None:
                 if not self._warned_vip_fallback:
-                    print(
+                    self._log(
                         "警告：未检测到可用的 VIP token，已回落至普通接口，可能触发权限错误"
                     )
                     self._warned_vip_fallback = True
@@ -1265,9 +1317,13 @@ class MarketDatasetDownloader:
         client: Any,
         method_name: str,
         paginate: bool,
+        *,
+        progress_task: Any = None,
     ) -> PeriodFetchOutcome:
         outcome = PeriodFetchOutcome()
         failure_seen = False
+        success_count = 0
+        fail_count = 0
         for period_value in periods:
             df, success = self._fetch_period(
                 spec,
@@ -1282,11 +1338,15 @@ class MarketDatasetDownloader:
                 failure_seen = True
                 outcome.failed_periods.append(period_value)
                 combo_desc = combo.describe(spec)
-                print(
-                    f"警告：{spec.name} {combo_desc} 在 {period_value} 抓取失败，"
-                    "请稍后手动排查"
+                self._log(
+                    f"警告：{spec.name} {combo_desc} 在 {period_value} 抓取失败，请稍后手动排查"
+                )
+                fail_count += 1
+                self.progress.advance(
+                    progress_task, 1, ok=success_count, fail=fail_count
                 )
                 continue
+            success_count += 1
             outcome.last_successful_period = period_value
             if not failure_seen:
                 outcome.last_contiguous_period = period_value
@@ -1296,6 +1356,9 @@ class MarketDatasetDownloader:
                     outcome.truncated_periods.append(info)
                 if not df.empty:
                     outcome.frames.append(df)
+            self.progress.advance(
+                progress_task, 1, ok=success_count, fail=fail_count
+            )
         return outcome
 
     def _fetch_period(
@@ -1368,7 +1431,7 @@ class MarketDatasetDownloader:
         limiter = self._ensure_limiter(client)
 
         def _log_retry(attempt: int, exc: Exception, wait_seconds: float) -> None:
-            print(
+            self._log(
                 f"警告：调用 {api_name} 异常，{wait_seconds:.1f}s 后重试"
                 f"（第 {attempt}/{policy.max_retries} 次）: {exc}"
             )
@@ -1404,9 +1467,8 @@ class MarketDatasetDownloader:
                     pd.util.hash_pandas_object(df, index=True).values.tobytes()
                 ).digest()
                 if signature in seen_signatures:
-                    print(
-                        "警告："
-                        f"调用 {api_name} 分页出现重复结果（offset={offset}），已提前终止"
+                    self._log(
+                        f"警告：调用 {api_name} 分页出现重复结果（offset={offset}），已提前终止"
                     )
                     break
                 seen_signatures.add(signature)
@@ -1425,7 +1487,9 @@ class MarketDatasetDownloader:
             if fields:
                 self._validate_fields(api_name, fields, result)
             if page_limit_hit:
-                print(f"警告：调用 {api_name} 达到分页上限 {MAX_PAGES}，结果可能被截断")
+                self._log(
+                    f"警告：调用 {api_name} 达到分页上限 {MAX_PAGES}，结果可能被截断"
+                )
                 result.attrs["page_limit_hit"] = True
                 result.attrs["pagination_info"] = {
                     "pages": pages,
@@ -1443,7 +1507,7 @@ class MarketDatasetDownloader:
                 on_retry=_log_retry,
             )
         except RetryExhaustedError as exc:
-            print(f"警告：调用 {api_name} 失败：{exc.last_exception}")
+            self._log(f"警告：调用 {api_name} 失败：{exc.last_exception}")
             return None
 
     def _record_failures(
