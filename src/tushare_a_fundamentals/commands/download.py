@@ -45,7 +45,7 @@ def _download_defaults() -> dict:
         "export_enabled": False,
         "export_out_dir": None,
         "export_out_format": "csv",
-        "export_kinds": "annual,single,cumulative",
+        "export_kinds": "",
         "export_annual_strategy": "cumulative",
         "export_years": None,
         "export_strict": False,
@@ -105,7 +105,7 @@ def _build_export_args(cfg: dict) -> Namespace | None:
             str(k).strip() for k in export_kinds_cfg if str(k).strip()
         )
     elif export_kinds_cfg is None:
-        export_kinds = "annual,single,cumulative"
+        export_kinds = ""
     else:
         export_kinds = str(export_kinds_cfg)
 

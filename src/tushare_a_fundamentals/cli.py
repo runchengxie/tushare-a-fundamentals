@@ -47,8 +47,8 @@ def parse_cli() -> argparse.Namespace:
     sp_exp.add_argument(
         "--kinds",
         type=str,
-        default="annual,single,cumulative",
-        help="逗号分隔：annual,single,cumulative",
+        default="",
+        help="逗号分隔：annual,single,cumulative（默认空：跳过 income 派生导出）",
     )
     sp_exp.add_argument(
         "--annual-strategy",
@@ -252,7 +252,7 @@ def parse_cli() -> argparse.Namespace:
         "--export-kinds",
         dest="export_kinds",
         type=str,
-        help="导出口径（默认 annual,single,cumulative）",
+        help="导出口径（默认空：仅执行平面导出）",
     )
     sp_dl.add_argument(
         "--export-annual-strategy",

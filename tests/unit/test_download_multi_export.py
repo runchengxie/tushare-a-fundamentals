@@ -74,7 +74,7 @@ def test_cmd_download_runs_export_when_enabled(monkeypatch, tmp_path):
     assert ns.dataset_root == str(tmp_path)
     assert ns.out_format == "csv"
     assert ns.out_dir == str(tmp_path)
-    assert ns.kinds == "annual,single,cumulative"
+    assert ns.kinds == ""
     assert ns.flat_datasets == "auto"
     assert ns.flat_exclude == ""
     assert ns.split_by == "none"

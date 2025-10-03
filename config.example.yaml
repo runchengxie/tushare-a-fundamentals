@@ -87,7 +87,8 @@ max_retries: 3
 export_enabled: false
 export_out_format: "csv"
 export_out_dir: null  # default to <outdir>/<format>
-export_kinds: "annual,single,cumulative"
+export_kinds: ""
+# Set to "annual,single,cumulative" to opt into derived income exports.
 export_annual_strategy: "cumulative"
 # export_flat_datasets: "auto"  # auto/all to scan available datasets, comma list to restrict, none to skip
 # export_flat_exclude: ""      # comma-separated dataset names to exclude from flat export
