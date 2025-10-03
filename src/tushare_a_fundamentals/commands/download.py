@@ -2,18 +2,11 @@ import argparse
 import os
 import sys
 from argparse import Namespace
-from pathlib import Path
-
-import pandas as pd
 
 from ..common import (
     DEFAULT_FIELDS,
-    _concat_non_empty,
-    _export_tables,
     _periods_from_cfg,
-    build_income_export_tables,
     ensure_enough_credits,
-    ensure_ts_code,
     eprint,
     init_pro_api,
     load_yaml,
@@ -49,7 +42,7 @@ def _download_defaults() -> dict:
         "use_vip": True,
         "max_per_minute": 90,
         "state_path": None,
-        "export_enabled": True,
+        "export_enabled": False,
         "export_out_dir": None,
         "export_out_format": "csv",
         "export_kinds": "annual,single,cumulative",
@@ -94,15 +87,16 @@ def _collect_cli_overrides(args: argparse.Namespace) -> dict:
     return overrides
 
 
-def _build_export_args(cfg: dict, outdir: str, prefix: str) -> Namespace | None:
-    if not cfg.get("export_enabled", True):
+def _build_export_args(cfg: dict) -> Namespace | None:
+    if not cfg.get("export_enabled", False):
         return None
-    export_out_format = (cfg.get("export_out_format") or "csv").lower()
+    data_dir = cfg.get("data_dir") or "data"
     export_out_dir_cfg = cfg.get("export_out_dir")
     if export_out_dir_cfg:
         export_out_dir = export_out_dir_cfg
     else:
-        export_out_dir = os.path.normpath(outdir)
+        export_out_dir = os.path.normpath(cfg.get("outdir") or data_dir)
+
     export_kinds_cfg = cfg.get("export_kinds")
     if isinstance(export_kinds_cfg, (list, tuple, set)):
         export_kinds = ",".join(
@@ -112,17 +106,25 @@ def _build_export_args(cfg: dict, outdir: str, prefix: str) -> Namespace | None:
         export_kinds = "annual,single,cumulative"
     else:
         export_kinds = str(export_kinds_cfg)
+
     export_years = cfg.get("export_years")
     if export_years is None:
         export_years = cfg.get("years")
+
     return Namespace(
-        dataset_root=outdir,
+        dataset_root=data_dir,
         years=export_years,
         kinds=export_kinds,
         annual_strategy=cfg.get("export_annual_strategy", "cumulative"),
-        out_format=export_out_format,
+        out_format=(cfg.get("export_out_format") or "csv").lower(),
         out_dir=export_out_dir,
-        prefix=prefix,
+        prefix=cfg.get("prefix") or "income",
+        flat_datasets=cfg.get("export_flat_datasets", "auto"),
+        flat_exclude=cfg.get("export_flat_exclude", ""),
+        split_by=cfg.get("export_split_by", "none"),
+        gzip=bool(cfg.get("export_gzip", False)),
+        no_income=bool(cfg.get("export_no_income", False)),
+        no_flat=bool(cfg.get("export_no_flat", False)),
     )
 
 
@@ -137,56 +139,6 @@ def _run_export(export_args: Namespace, strict: bool | None) -> None:
         eprint(f"警告：导出失败（已保留 parquet）：{exc}")
         if strict:
             raise
-
-
-def _load_dataset_from_data_dir(data_dir: str, dataset: str) -> pd.DataFrame:
-    base = Path(data_dir) / dataset
-    if not base.exists():
-        return pd.DataFrame()
-    files = sorted(base.rglob("*.parquet"))
-    frames: list[pd.DataFrame] = []
-    for file in files:
-        try:
-            frames.append(pd.read_parquet(file))
-        except Exception as exc:  # pragma: no cover - defensive logging
-            eprint(f"警告：读取 {file} 失败：{exc}")
-    if not frames:
-        return pd.DataFrame()
-    combined = _concat_non_empty(frames)
-    if combined.empty:
-        return combined
-    return ensure_ts_code(combined, context=dataset)
-
-
-def _export_income_from_multi(cfg: dict, data_dir: str, requests) -> None:
-    if not cfg.get("export_enabled", True):
-        return
-    dataset_names = {req.name for req in requests}
-    if "income" not in dataset_names:
-        return
-    data_dir = cfg.get("data_dir") or "data"
-    outdir = cfg.get("outdir") or data_dir
-    prefix = cfg.get("prefix") or "income"
-    export_args = _build_export_args(cfg, outdir, prefix)
-    if export_args is None:
-        return
-    income_df = _load_dataset_from_data_dir(data_dir, "income")
-    if income_df.empty:
-        eprint("提示：income 数据为空，跳过自动导出")
-        return
-    kinds = [s.strip() for s in export_args.kinds.split(",") if s.strip()]
-    built = build_income_export_tables(
-        income_df,
-        years=export_args.years,
-        kinds=kinds,
-        annual_strategy=export_args.annual_strategy,
-    )
-    if not built:
-        eprint("提示：未生成可导出的 income 数据，跳过自动导出")
-        return
-    _export_tables(
-        built, export_args.out_dir, export_args.prefix, export_args.out_format
-    )
 
 
 def cmd_download(args: argparse.Namespace) -> None:
@@ -450,4 +402,6 @@ def _run_multi_dataset_flow(
         end=parse_yyyymmdd(end_raw),
         refresh_periods=int(cfg.get("recent_quarters") or 0),
     )
-    _export_income_from_multi(cfg, data_dir, dataset_requests)
+    export_args = _build_export_args(cfg)
+    if export_args is not None:
+        _run_export(export_args, cfg.get("export_strict"))

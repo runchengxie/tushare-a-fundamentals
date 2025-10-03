@@ -1,142 +1,128 @@
 import argparse
+from pathlib import Path
 
 import pandas as pd
 import pytest
 
 from tushare_a_fundamentals.commands import export as expmod
-from tushare_a_fundamentals.common import build_income_export_tables
 
 pytestmark = pytest.mark.unit
 
 
-def test_cmd_export_generates_single_and_cumulative(monkeypatch):
-    cum = pd.DataFrame(
-        {
-            "ts_code": ["000001.SZ", "000001.SZ"],
-            "end_date": ["20230331", "20230630"],
-            "total_revenue": [10.0, 30.0],
-        }
-    )
+def _make_dataset(root: Path, name: str, year: str, frame: pd.DataFrame) -> None:
+    target = root / name / f"year={year}"
+    target.mkdir(parents=True, exist_ok=True)
+    frame.to_parquet(target / "data.parquet", index=False)
 
-    monkeypatch.setattr(expmod, "_load_dataset", lambda root, name: cum)
-    saved = {}
 
-    def fake_export_tables(built, out_dir, prefix, out_fmt):
-        saved.update(built)
-
-    monkeypatch.setattr(expmod, "_export_tables", fake_export_tables)
-
-    args = argparse.Namespace(
-        dataset_root="root",
-        kinds="single,cumulative",
-        out_format="csv",
-        out_dir="out",
-        prefix="income",
+def _default_args(dataset_root: Path) -> argparse.Namespace:
+    return argparse.Namespace(
+        dataset_root=str(dataset_root),
+        years=None,
+        kinds="annual,single,cumulative",
         annual_strategy="cumulative",
-    )
-
-    expmod.cmd_export(args)
-
-    assert set(saved.keys()) == {"single", "cumulative"}
-    single_df = saved["single"]
-    q1, q2 = single_df["total_revenue"].tolist()
-    assert q1 == 10.0
-    assert q2 == 20.0
-
-
-def test_cmd_export_years_filter(monkeypatch):
-    periods = [
-        "20211231",
-        "20220331",
-        "20220630",
-        "20220930",
-        "20221231",
-    ]
-    cum = pd.DataFrame(
-        {
-            "ts_code": ["000001.SZ"] * len(periods),
-            "end_date": periods,
-            "total_revenue": list(range(len(periods))),
-        }
-    )
-
-    monkeypatch.setattr(expmod, "_load_dataset", lambda root, name: cum)
-    saved = {}
-
-    def fake_export_tables(built, out_dir, prefix, out_fmt):
-        saved.update(built)
-
-    monkeypatch.setattr(expmod, "_export_tables", fake_export_tables)
-
-    args = argparse.Namespace(
-        dataset_root="root",
-        kinds="cumulative",
         out_format="csv",
-        out_dir="out",
+        out_dir=str(dataset_root),
         prefix="income",
-        annual_strategy="cumulative",
-        years=1,
+        flat_datasets="auto",
+        flat_exclude="",
+        split_by="none",
+        gzip=False,
+        no_income=False,
+        no_flat=False,
     )
 
-    expmod.cmd_export(args)
 
-    cum_df = saved["cumulative"]
-    assert set(cum_df["end_date"].astype(str)) == set(periods[-4:])
-
-
-def test_cmd_export_warns_when_years_exceed_cache(monkeypatch, capsys):
-    periods = [
-        "20220331",
-        "20220630",
-        "20220930",
-    ]
-    cum = pd.DataFrame(
-        {
-            "ts_code": ["000001.SZ"] * len(periods),
-            "end_date": periods,
-            "total_revenue": [10.0, 20.0, 30.0],
-        }
-    )
-
-    monkeypatch.setattr(expmod, "_load_dataset", lambda root, name: cum)
-    monkeypatch.setattr(expmod, "_export_tables", lambda built, out_dir, prefix, out_fmt: None)
-
-    args = argparse.Namespace(
-        dataset_root="root",
-        kinds="cumulative",
-        out_format="csv",
-        out_dir="out",
-        prefix="income",
-        annual_strategy="cumulative",
-        years=5,
-    )
-
-    expmod.cmd_export(args)
-
-    captured = capsys.readouterr()
-    assert "提示：导出窗口" in captured.err
-
-
-def test_build_income_export_tables_creates_all_kinds():
-    df = pd.DataFrame(
+def test_cmd_export_full_flow(tmp_path):
+    data_root = tmp_path / "data"
+    income = pd.DataFrame(
         {
             "ts_code": ["000001.SZ", "000001.SZ", "000001.SZ"],
             "end_date": ["20230331", "20230630", "20231231"],
             "total_revenue": [10.0, 30.0, 90.0],
-            "ann_date": ["20230401", "20230701", "20240110"],
-            "f_ann_date": ["20230402", "20230702", "20240111"],
+            "ann_date": ["20230410", "20230710", "20240110"],
+            "f_ann_date": ["20230411", "20230711", "20240111"],
         }
     )
-
-    built = build_income_export_tables(
-        df,
-        years=None,
-        kinds=["cumulative", "single", "annual"],
-        annual_strategy="cumulative",
+    balance = pd.DataFrame(
+        {
+            "ts_code": ["000001.SZ"],
+            "end_date": ["20230331"],
+            "total_assets": [100.0],
+        }
     )
+    _make_dataset(data_root, "income", "2023", income)
+    _make_dataset(data_root, "balancesheet", "2023", balance)
 
-    assert set(built.keys()) == {"cumulative", "single", "annual"}
-    assert len(built["cumulative"]) == 3
-    single_values = built["single"]["total_revenue"].tolist()
-    assert single_values == [10.0, 20.0, 60.0]
-    assert "annual" in built and not built["annual"].empty
+    args = _default_args(data_root)
+    expmod.cmd_export(args)
+
+    csv_dir = data_root / "csv"
+    assert (csv_dir / "income_cumulative.csv").exists()
+    assert (csv_dir / "income_single.csv").exists()
+    assert (csv_dir / "income_annual.csv").exists()
+    balance_csv = csv_dir / "balancesheet.csv"
+    assert balance_csv.exists()
+    loaded = pd.read_csv(balance_csv)
+    assert len(loaded) == 1
+    assert loaded.loc[0, "total_assets"] == 100.0
+
+
+def test_cmd_export_skip_income(tmp_path):
+    data_root = tmp_path / "data"
+    income = pd.DataFrame(
+        {
+            "ts_code": ["000001.SZ"],
+            "end_date": ["20230331"],
+            "total_revenue": [10.0],
+        }
+    )
+    extras = pd.DataFrame(
+        {
+            "ts_code": ["000001.SZ"],
+            "end_date": ["20230331"],
+            "cash": [5.0],
+        }
+    )
+    _make_dataset(data_root, "income", "2023", income)
+    _make_dataset(data_root, "cashflow", "2023", extras)
+
+    args = _default_args(data_root)
+    args.no_income = True
+    expmod.cmd_export(args)
+
+    csv_dir = data_root / "csv"
+    assert not (csv_dir / "income_cumulative.csv").exists()
+    assert (csv_dir / "cashflow.csv").exists()
+
+
+def test_cmd_export_skip_flat(tmp_path):
+    data_root = tmp_path / "data"
+    income = pd.DataFrame(
+        {
+            "ts_code": ["000001.SZ"],
+            "end_date": ["20230331"],
+            "total_revenue": [10.0],
+        }
+    )
+    _make_dataset(data_root, "income", "2023", income)
+    _make_dataset(data_root, "express", "2023", income)
+
+    args = _default_args(data_root)
+    args.no_flat = True
+    expmod.cmd_export(args)
+
+    csv_dir = data_root / "csv"
+    assert (csv_dir / "income_cumulative.csv").exists()
+    assert not (csv_dir / "express.csv").exists()
+
+
+def test_cmd_export_conflicting_flags_raises(tmp_path):
+    args = _default_args(tmp_path)
+    args.no_income = True
+    args.no_flat = True
+
+    with pytest.raises(SystemExit) as excinfo:
+        expmod.cmd_export(args)
+
+    assert excinfo.value.code == 2

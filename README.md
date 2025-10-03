@@ -32,7 +32,7 @@
 
 ```bash
 cp .env.example .env        # 填好 TUSHARE_TOKEN
-funda download              # 批量除了审计意见以外的所有数据下载，缓存，并导出CSV
+funda download              # 批量除了审计意见以外的所有数据下载并缓存（默认不导出 CSV）
 funda download --audit-only # 审计意见由于需要逐个个股遍历，运行时间较长，单独运行
 ```
 
@@ -201,7 +201,7 @@ funda download --since 2010-01-01 --until 2019-12-31
 
 * 默认会依据披露截止日裁掉未来季度，如需强制包含可加 `--allow-future`；
 
-* `--no-export` / `--export`：关闭或显式开启派生数据导出；`--export-format`、`--export-out-dir`、`--export-kinds`、`--export-years`、`--export-annual-strategy` 用于自定义 CSV 输出。
+* `--no-export` / `--export`：显式关闭或开启下载结束后的导出流程（默认仅缓存 parquet，不触发导出）；`--export-format`、`--export-out-dir`、`--export-kinds`、`--export-years`、`--export-annual-strategy` 用于自定义导出行为。
 
 * 每次下载如遇失败 period/window，会在 `data/_state/failures/` 下生成对应 JSON 清单，方便后续优先补齐。
 
@@ -219,7 +219,7 @@ funda download --since 2010-01-01 --until 2019-12-31
     funda download --years 30
     ```
 
-说明：下载口径固定为“按季度期末日的累计（YTD）值”，默认会生成 `dataset=inventory_income` 与 `dataset=fact_income_cum` 两套 parquet 数仓，并自动导出年度/季度累计/单季 CSV；仅需原始去重表时可追加 `--no-export`。
+说明：下载口径固定为“按季度期末日的累计（YTD）值”，默认会生成按年份分区的 parquet 数据集（如 `income`、`balancesheet` 等），不会自动导出 CSV；需要年度/季度/单季 CSV 或其它数据集的扁平化表格时，请在下载完成后运行 `funda export`。
 
 #### 数据完整性检测/可视化覆盖情况
 
@@ -239,7 +239,7 @@ funda coverage
 
 #### 数据导出成csv
 
-一般来说，默认情况下，`funda download`指令会自动完成数据抓取-数据缓存-导出csv的全流程，如果想在曾经执行过下载指令并已生成缓存数据的情况下，也可以选择直接导出数据，也就是 `export` 构建按年度数据（指令：annual）/ 季度累计（指令：cumulative）/单季（指令：single）导出：
+一般来说，默认情况下，`funda download` 只负责抓取数据并写入 parquet 缓存。如需生成 CSV，可在缓存就绪后执行 `funda export`，构建年度（`annual`）/季度累计（`cumulative`）/单季（`single`）口径，并将其与其余数据集一并导出为平面 CSV。
 
 * `dataset=fact_income_cum/year=YYYY/*.parquet`（最新快照）
 

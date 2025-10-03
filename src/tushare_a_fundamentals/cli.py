@@ -47,7 +47,7 @@ def parse_cli() -> argparse.Namespace:
     sp_exp.add_argument(
         "--kinds",
         type=str,
-        default="annual,single",
+        default="annual,single,cumulative",
         help="逗号分隔：annual,single,cumulative",
     )
     sp_exp.add_argument(
@@ -59,6 +59,39 @@ def parse_cli() -> argparse.Namespace:
     sp_exp.add_argument("--out-format", choices=["csv", "parquet"], default="csv")
     sp_exp.add_argument("--out-dir", type=str, default="data")
     sp_exp.add_argument("--prefix", type=str, default="income")
+    sp_exp.add_argument(
+        "--flat-datasets",
+        type=str,
+        default="auto",
+        help="平面导出数据集列表（auto/all 为自动检测，逗号分隔指定列表，none 表示跳过）",
+    )
+    sp_exp.add_argument(
+        "--flat-exclude",
+        type=str,
+        default="",
+        help="逗号分隔需排除的数据集",
+    )
+    sp_exp.add_argument(
+        "--split-by",
+        choices=["none", "year"],
+        default="none",
+        help="平面导出拆分策略：none 或 year",
+    )
+    sp_exp.add_argument(
+        "--gzip",
+        action="store_true",
+        help="CSV 输出使用 gzip 压缩",
+    )
+    sp_exp.add_argument(
+        "--no-income",
+        action="store_true",
+        help="跳过 income 派生导出",
+    )
+    sp_exp.add_argument(
+        "--no-flat",
+        action="store_true",
+        help="跳过平面导出，仅构建 income 派生表",
+    )
 
     sp_cov = sub.add_parser("coverage", help="盘点已覆盖的股票×期末日")
     sp_cov.add_argument(
@@ -182,9 +215,14 @@ def parse_cli() -> argparse.Namespace:
         "--no-export",
         action="store_true",
         dest="no_export",
-        help="仅写 raw/parquet 数仓，不导出派生 CSV",
+        help="仅写 raw/parquet 数仓，不导出派生 CSV（默认行为）",
     )
-    sp_dl.add_argument("--export", action="store_true", dest="export_enabled")
+    sp_dl.add_argument(
+        "--export",
+        action="store_true",
+        dest="export_enabled",
+        help="下载完成后立即运行导出流程",
+    )
     sp_dl.set_defaults(export_enabled=None)
     sp_dl.add_argument(
         "--export-out-dir",

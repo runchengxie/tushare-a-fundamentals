@@ -84,11 +84,17 @@ max_retries: 3
 
 # --- Export behavior configuration -- 
 # Derived export controls (download -> parquet snapshot -> CSV export)
-export_enabled: true
+export_enabled: false
 export_out_format: "csv"
 export_out_dir: null  # default to <outdir>/<format>
 export_kinds: "annual,single,cumulative"
 export_annual_strategy: "cumulative"
+# export_flat_datasets: "auto"  # auto/all to scan available datasets, comma list to restrict, none to skip
+# export_flat_exclude: ""      # comma-separated dataset names to exclude from flat export
+# export_split_by: "none"       # set to "year" to split flat exports into per-year files
+# export_gzip: false             # true to emit .csv.gz files when out_format=csv
+# export_no_income: false        # true to skip income annual/single/cumulative exports
+# export_no_flat: false          # true to skip flat exports (only produce income derivatives)
 # export_years - By default, inherits the value from 'years'; even if set to a larger value, it will only export the quarters that currently exist in the cache.
 # export_years: 10
 # export_strict - When set to true, an error during the export phase will throw an exception and terminate the task; the default (false) only shows a warning and keeps the already built Parquet files.
