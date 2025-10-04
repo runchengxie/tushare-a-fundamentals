@@ -5,6 +5,9 @@ import random
 import sys
 import threading
 import time
+from collections import deque
+from heapq import heappop, heappush
+from itertools import count
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, InvalidOperation
@@ -13,6 +16,7 @@ from typing import (
     Any,
     Callable,
     Dict,
+    Deque,
     List,
     Literal,
     Optional,
@@ -195,21 +199,24 @@ class _TokenClient:
 
         self.token = token
         self.max_per_minute = max(0, int(rate))
-        self.calls: List[float] = []
+        self.calls: Deque[float] = deque()
         self._lock = threading.Lock()
         self.pro = ts.pro_api(token=token)
 
     def try_acquire(self, now: float) -> Tuple[bool, float]:
         with self._lock:
-            window_start = now - 60
-            self.calls = [t for t in self.calls if t >= window_start]
-            if self.max_per_minute <= 0 or len(self.calls) < self.max_per_minute:
+            window_start = now - 60.0
+            while self.calls and self.calls[0] < window_start:
+                self.calls.popleft()
+            if self.max_per_minute <= 0:
+                return True, 0.0
+            if len(self.calls) < self.max_per_minute:
                 self.calls.append(now)
                 return True, 0.0
             if not self.calls:
-                return False, 0.1
-            wait_for = 60 - (now - self.calls[0]) + 0.1
-            return False, max(wait_for, 0.05)
+                return False, 0.05
+            wait_for = self.calls[0] + 60.0 - now
+            return False, max(wait_for, 0.0)
 
     def set_rate(self, rate: int) -> None:
         with self._lock:
@@ -232,7 +239,10 @@ class ProPool:
             raise ValueError("ProPool requires at least one token")
         self._clients = [_TokenClient(tok, per_token_rate) for tok in filtered]
         self._lock = threading.Lock()
-        self._rr_index = 0
+        self._sequence = count()
+        self._availability: List[Tuple[float, int, _TokenClient]] = []
+        for client in self._clients:
+            heappush(self._availability, (0.0, next(self._sequence), client))
         self._rate = max(0, int(per_token_rate))
 
     def set_rate(self, rate: Optional[int]) -> None:
@@ -240,33 +250,31 @@ class ProPool:
         self._rate = value
         for client in self._clients:
             client.set_rate(value)
+        with self._lock:
+            self._availability.clear()
+            for client in self._clients:
+                heappush(self._availability, (0.0, next(self._sequence), client))
 
     def _acquire_client(self) -> _TokenClient:
-        if len(self._clients) == 1:
-            client = self._clients[0]
-            while True:
-                now = time.time()
-                acquired, wait = client.try_acquire(now)
-                if acquired:
-                    return client
-                time.sleep(max(wait, 0.05))
         while True:
-            now = time.time()
+            attempt_time = time.monotonic()
+            sleep_for = 0.05
             with self._lock:
-                start = self._rr_index
-                self._rr_index = (self._rr_index + 1) % len(self._clients)
-                order = [
-                    self._clients[(start + i) % len(self._clients)]
-                    for i in range(len(self._clients))
-                ]
-            earliest_wait: Optional[float] = None
-            for client in order:
-                acquired, wait = client.try_acquire(now)
-                if acquired:
-                    return client
-                if earliest_wait is None or wait < earliest_wait:
-                    earliest_wait = wait
-            time.sleep(max(earliest_wait or 0.05, 0.05))
+                next_ready, _, client = heappop(self._availability)
+                if next_ready > attempt_time:
+                    sleep_for = next_ready - attempt_time
+                    heappush(self._availability, (next_ready, next(self._sequence), client))
+                    client = None
+            if client is None:
+                time.sleep(max(sleep_for, 0.05))
+                continue
+            now = time.monotonic()
+            acquired, wait = client.try_acquire(now)
+            next_available = now if wait <= 0 else now + wait
+            with self._lock:
+                heappush(self._availability, (next_available, next(self._sequence), client))
+            if acquired:
+                return client
 
     def query(self, *args: Any, **kwargs: Any):
         client = self._acquire_client()
