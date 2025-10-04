@@ -32,6 +32,7 @@
 cp .env.example .env        # 填好 TUSHARE_TOKEN
 funda download              # 批量除了审计意见以外的所有数据下载并缓存（默认不导出 CSV）
 funda download --audit-only # 审计意见由于需要逐个个股遍历，运行时间较长，单独运行
+funda export				# 导出已下载的数据
 ```
 
 ### 提示
@@ -284,7 +285,6 @@ funda export --kinds annual,single,cumulative \\
 * 历史流程沿用 `out/` 目录作为默认输入/输出；如需复刻旧目录结构，可在命令中显式设置 `--dataset-root out` 或 `--out-dir out`。
 * `--raw-only`：只下载原始数据，不构建数仓派生层。
 * `--build-only`：跳过下载，仅由现有原始数据构建数仓派生层。
-* 旧版存在 `--skip-existing`、`--force` 等覆盖策略开关，现已被统一的 `recent_quarters` 配置取代。
 
 ## 常见问题
 
@@ -330,10 +330,3 @@ pytest
 # 如需覆盖率：pytest --cov=src --cov-report=term-missing
 ```
 
-## 贡献指南
-
-欢迎通过 Issue 或 Pull Request 参与协作。提交前请参考仓库根目录的 [AGENTS.md](./AGENTS.md) 获取代码风格、测试与提交流程约定。
-
-## 许可协议
-
-本项目使用 [MIT License](./LICENSE)。
