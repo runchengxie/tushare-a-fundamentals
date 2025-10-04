@@ -5,8 +5,13 @@
 # from the latest available quarter. For example, years: 10 equals 40 quarters.
 # Alternatively, comment out 'years' and set 'quarters' directly.
 # Priority: --since/--until > quarters > years.
+#
+# 审计数据（`--audit-only`）可以通过 `audit_quarters`/`audit_years`
+# 独立配置回溯窗口；若未指定，则在未提供任何全局时间窗口时默认回溯 1 个季度。
 years: 10
 # quarters: 40
+audit_quarters: 1
+# audit_years: 1
 
 
 # --- Data refresh ---
