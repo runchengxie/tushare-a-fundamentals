@@ -34,3 +34,13 @@ def test_load_yaml_conflicting_files(monkeypatch, tmp_path):
 
     with pytest.raises(SystemExit):
         load_yaml(None)
+
+
+def test_load_yaml_missing_files_returns_defaults(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(os, "getcwd", lambda: str(tmp_path))
+
+    data = load_yaml(None)
+
+    captured = capsys.readouterr()
+    assert data == {}
+    assert "提示：未检测到 config" in captured.out

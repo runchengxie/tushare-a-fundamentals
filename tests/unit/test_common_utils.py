@@ -1,6 +1,11 @@
+import importlib.util
+import os
+import sys
+
 import pandas as pd
 import pytest
 
+import tushare_a_fundamentals.common as common
 from tushare_a_fundamentals.common import ensure_ts_code, merge_config
 
 
@@ -49,3 +54,20 @@ def test_ensure_ts_code_missing_column():
 
     with pytest.raises(KeyError):
         ensure_ts_code(df, context="unit-test")
+
+
+def test_legacy_api_key_env_mapping(monkeypatch):
+    monkeypatch.delenv("TUSHARE_TOKEN", raising=False)
+    monkeypatch.setenv("TUSHARE_API_KEY", "legacy-token")
+
+    spec = importlib.util.spec_from_file_location(
+        "tushare_a_fundamentals.common_legacy", common.__file__
+    )
+    assert spec and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)  # type: ignore[union-attr]
+        assert os.getenv("TUSHARE_TOKEN") == "legacy-token"
+    finally:
+        sys.modules.pop(spec.name, None)

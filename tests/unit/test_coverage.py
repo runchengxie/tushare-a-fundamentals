@@ -62,3 +62,16 @@ def test_cmd_coverage_years(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "20211231" not in out
     assert "20221231" in out
+
+
+def test_cmd_coverage_csv_output(tmp_path):
+    root = _prepare_dataset(tmp_path)
+    csv_path = tmp_path / "coverage.csv"
+    args = SimpleNamespace(dataset_root=str(root), by="ticker", csv=str(csv_path))
+
+    cmd_coverage(args)
+
+    content = csv_path.read_text("utf-8").strip().splitlines()
+    assert len(content) >= 2
+    header = content[0].split(",")
+    assert {"ts_code", "missing_periods"}.issubset(set(header))

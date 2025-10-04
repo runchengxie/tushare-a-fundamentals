@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pandas as pd
 
+import tushare_a_fundamentals.downloader as downloader
 from tushare_a_fundamentals.downloader import write_parquet_dataset
 
 
@@ -66,3 +67,39 @@ def test_write_parquet_dataset_deduplicates(tmp_path):
     stored_new = _read_partition(partition_dir_new)
     assert len(stored_new) == 1
     assert stored_new.loc[0, "ts_code"] == "000002.SZ"
+
+
+def test_write_parquet_dataset_warns_on_read_failure(monkeypatch, tmp_path, capsys):
+    target_dir = tmp_path / "dividend" / "year=2023"
+    target_dir.mkdir(parents=True)
+    (target_dir / "data.parquet").write_bytes(b"")
+
+    def fail_read(path: str) -> object:
+        raise OSError("boom")
+
+    monkeypatch.setattr(downloader.pq, "read_table", fail_read)
+
+    df = pd.DataFrame(
+        {
+            "ts_code": ["000001.SZ"],
+            "ann_date": ["20231231"],
+            "retrieved_at": [pd.Timestamp("2024-05-01T00:00:00Z")],
+            "value": [1],
+        }
+    )
+
+    ok = write_parquet_dataset(
+        df,
+        root=tmp_path.as_posix(),
+        dataset="dividend",
+        year_col="ann_date",
+        group_keys=("ts_code", "ann_date"),
+    )
+
+    captured = capsys.readouterr()
+    assert ok is True
+    assert "警告：读取" in captured.out
+
+    stored = _read_partition(target_dir)
+    assert len(stored) == 1
+    assert stored.loc[0, "value"] == 1
