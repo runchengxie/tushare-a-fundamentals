@@ -204,6 +204,20 @@ def test_cmd_download_audit_only_prefers_audit_quarters(monkeypatch, tmp_path):
     assert captured["end"] == "20240331"
 
 
+def test_run_export_strict_propagates_system_exit(monkeypatch):
+    args = Namespace()
+
+    def boom(_: Namespace) -> None:
+        raise SystemExit(2)
+
+    monkeypatch.setattr(download_cmd, "cmd_export", boom)
+
+    with pytest.raises(SystemExit) as excinfo:
+        download_cmd._run_export(args, True)
+
+    assert excinfo.value.code == 2
+
+
 def test_cmd_download_audit_only_falls_back_to_one_quarter(monkeypatch, tmp_path):
     captured: dict[str, object] = {}
 

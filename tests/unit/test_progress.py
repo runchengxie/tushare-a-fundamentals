@@ -40,3 +40,19 @@ def test_progress_manager_auto_prefers_rich_when_tty(monkeypatch):
     pm = ProgressManager("auto")
     assert pm.progress is not None
     assert pm.console is not None
+
+
+def test_progress_manager_auto_falls_back_to_plain(monkeypatch, capsys):
+    monkeypatch.setattr(progress, "_is_tty", lambda stream: False)
+    monkeypatch.setattr(progress.time, "time", lambda: 10.0)
+
+    pm = ProgressManager("auto")
+
+    task = pm.add_task("下载", 2)
+    assert isinstance(task, PlainTicker)
+
+    pm.advance(task, ok=2)
+
+    captured = capsys.readouterr().out
+    assert "下载" in captured
+    assert "2/2" in captured
