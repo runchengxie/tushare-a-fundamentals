@@ -4,6 +4,15 @@
 
 > 由于该项目主要目的是全A市场全量数据下载，强烈建议使用5000积分API账户，非全量数据的下载功能尚未完善，不建议使用（本项目未实现个股枚举 fallback）
 
+## 先决条件
+
+* Python 版本需在 3.10–3.12 之间，建议通过 [`uv`](https://docs.astral.sh/uv/) 或 `pip` 管理依赖
+* 拥有有效的 TuShare 凭证，建议准备至少 5000 积分的 VIP 账户以避免限速
+* 具备可写磁盘空间用于缓存 parquet/CSV 数据，以及稳定的网络环境
+* （可选）安装 `direnv` 以便自动加载 `.env` 和本地虚拟环境
+
+完成 `pip install -e .` 或 `uv sync` 后，可执行 `funda --help` 验证 CLI 是否已正确安装
+
 * [利润表](https://tushare.pro/document/2?doc_id=33)
 
 * [资产负债表](https://tushare.pro/document/2?doc_id=36)
@@ -41,7 +50,7 @@ funda export				# 导出已下载的数据
 
 * 该项目的默认参数的设计原则是默认下载过去10年，也就是40个季度的有效数据
 
-* 财务审计意见的下载需要逐个个股遍历，如采用10年的逻辑，下载时间约20小时，故`funda download --audit-only`的默认行为是下载最近一个季度，预计耗时28分钟。但是也可以通过`funda download --audit-only --year 1`或者`funda download --audit-only --quarters 2）`以及修改`config.yaml`等方式强制修改下载年份范围
+* 财务审计意见的下载需要逐个个股遍历，如采用10年的逻辑，下载时间约20小时，故`funda download --audit-only`的默认行为是下载最近一个季度，预计耗时28分钟。但是也可以通过`funda download --audit-only --year 1`或者`funda download --audit-only --quarters 2`以及修改`config.yaml`等方式强制修改下载年份范围
 
 * 愿意长时间等待也可以`funda download --with-audit`，将进行默认包括审计意见数据在内的全量下载
 
@@ -97,6 +106,17 @@ recent_quarters: 4          # 刷新最近的季度数 (建议 2-4 覆盖常见�
    * 默认读取 `data/`，可借由 `--dataset-root` 与 `--out-dir` 将输入/输出统一到自定义目录（例如 `data/` 与 `data/export`）。
 
 3. 查看/维护增量状态与失败清单：`funda state show|clear|ls-failures`
+
+### 常用命令速查
+
+| 命令 | 作用 |
+| --- | --- |
+| `funda download [选项]` | 抓取并缓存指定数据集，支持增量/全量下载与自动导出 |
+| `funda download --with-audit` | 在常规批量下载的基础上连同审计意见一并抓取 |
+| `funda export [选项]` | 将缓存的 parquet 转换为 annual/single/cumulative CSV |
+| `funda coverage [选项]` | 检查数据缺口并生成覆盖矩阵或缺口清单 |
+| `funda state show` | 查看当前增量状态与失败记录位置 |
+| `pytest [-m unit|integration]` | 运行测试套件，确认代码与下载流程可用 |
 
 ### 进度展示
 
