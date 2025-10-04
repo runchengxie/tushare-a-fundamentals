@@ -29,6 +29,8 @@ def _download_defaults() -> dict:
         "quarters": None,
         "since": None,
         "until": None,
+        "audit_quarters": None,
+        "audit_years": None,
         "fields": ",".join(DEFAULT_FIELDS),
         "outdir": None,
         "prefix": "income",
@@ -60,6 +62,8 @@ def _collect_cli_overrides(args: argparse.Namespace) -> dict:
         "quarters": getattr(args, "quarters", None),
         "since": getattr(args, "since", None),
         "until": getattr(args, "until", None),
+        "audit_quarters": getattr(args, "audit_quarters", None),
+        "audit_years": getattr(args, "audit_years", None),
         "fields": getattr(args, "fields", None),
         "outdir": getattr(args, "outdir", None),
         "prefix": getattr(args, "prefix", None),
@@ -147,8 +151,10 @@ def _run_export(export_args: Namespace, strict: bool | None) -> None:
 def cmd_download(args: argparse.Namespace) -> None:
     cfg_file = load_yaml(getattr(args, "config", None))
     defaults = _download_defaults()
+    audit_window_missing = False
     if getattr(args, "audit_only", False):
         period_flag_names = ("since", "until", "quarters", "years")
+        audit_flag_names = ("audit_quarters", "audit_years")
 
         def _provided(value: object) -> bool:
             if value is None:
@@ -161,18 +167,48 @@ def cmd_download(args: argparse.Namespace) -> None:
             _provided(getattr(args, name, None)) for name in period_flag_names
         )
         cfg_has_window = False
+        audit_cfg_has_window = False
         if isinstance(cfg_file, dict):
             for name in period_flag_names:
                 if _provided(cfg_file.get(name)):
                     cfg_has_window = True
                     break
-        if not cli_has_window and not cfg_has_window:
-            defaults["quarters"] = 1
+            for name in audit_flag_names:
+                if _provided(cfg_file.get(name)):
+                    audit_cfg_has_window = True
+                    break
+        audit_cli_has_window = any(
+            _provided(getattr(args, name, None)) for name in audit_flag_names
+        )
+        audit_window_missing = not (
+            cli_has_window or cfg_has_window or audit_cli_has_window or audit_cfg_has_window
+        )
     cfg_missing = not bool(cfg_file)
     if cfg_missing:
         defaults["datasets"] = DEFAULT_DATASET_CONFIG
     cli_overrides = _collect_cli_overrides(args)
     cfg = merge_config(cli_overrides, cfg_file, defaults)
+    if getattr(args, "audit_only", False):
+        period_flag_names = ("since", "until", "quarters", "years")
+
+        def _provided(value: object) -> bool:
+            if value is None:
+                return False
+            if isinstance(value, str):
+                return bool(value.strip())
+            return True
+
+        audit_quarters = cfg.get("audit_quarters")
+        audit_years = cfg.get("audit_years")
+        if _provided(audit_quarters):
+            cfg["quarters"] = audit_quarters
+            cfg["years"] = None
+        elif _provided(audit_years):
+            cfg["years"] = audit_years
+            cfg["quarters"] = None
+        elif audit_window_missing:
+            cfg["quarters"] = 1
+            cfg["years"] = None
     cfg["report_types"] = parse_report_types(cfg.get("report_types"))
     cfg["fields"] = normalize_fields(cfg.get("fields"))
     raw_progress = str(cfg.get("progress", "auto") or "auto").strip().lower()
