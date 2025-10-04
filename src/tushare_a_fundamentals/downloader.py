@@ -7,6 +7,7 @@ import re
 import shutil
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -369,7 +370,7 @@ def write_parquet_dataset(  # noqa: C901
 class RateLimiter:
     def __init__(self, max_per_minute: int = 90) -> None:
         self.max_per_minute = max_per_minute
-        self.calls: List[float] = []
+        self.calls: deque[float] = deque()
         self._lock = threading.Lock()
 
     def wait(self) -> None:
@@ -377,18 +378,15 @@ class RateLimiter:
             return
         while True:
             with self._lock:
-                now = time.time()
-                window_start = now - 60
-                self.calls = [t for t in self.calls if t >= window_start]
+                now = time.monotonic()
+                window_start = now - 60.0
+                while self.calls and self.calls[0] < window_start:
+                    self.calls.popleft()
                 if len(self.calls) < self.max_per_minute:
                     self.calls.append(now)
                     return
-                sleep_for = 60 - (now - self.calls[0]) + 0.1
-            if sleep_for <= 0:
-                # Prevent busy wait if timestamps are virtually identical.
-                time.sleep(0.05)
-            else:
-                time.sleep(sleep_for)
+                sleep_for = self.calls[0] + 60.0 - now
+            time.sleep(max(sleep_for, 0.05))
 
 
 @dataclass(frozen=True)
