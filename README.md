@@ -239,7 +239,7 @@ funda download --since 2010-01-01 --until 2019-12-31
 
 * `--recent-quarters N`：滚动刷新最近 N 个季度（默认 8，设为 0 表示纯补缺）。配置文件中的同名字段共享该默认值。
 
-* `--max-retries N`：接口异常时最多重试 N 次（默认 3，设为 0 表示只尝试一次）。
+* `--max-retries N`：接口异常时最多重试 N 次（默认 3，`--audit-only` 模式下默认 5，设为 0 表示只尝试一次）。
 
 * `--state-path PATH`：覆盖增量状态文件位置；JSON 默认 `<data_dir>/_state/state.json`，SQLite 后端默认 `meta/state.db`。
 

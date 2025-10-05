@@ -134,6 +134,7 @@ def test_cmd_download_audit_only_prefers_audit_quarters(monkeypatch, tmp_path):
     class DummyDownloader:
         def __init__(self, pro, data_dir, *, vip_pro=None, **kwargs):
             captured["data_dir"] = data_dir
+            captured["init_kwargs"] = kwargs
 
         def run(self, requests, *, start=None, end=None, refresh_periods=0):
             captured["requests"] = requests
@@ -202,6 +203,7 @@ def test_cmd_download_audit_only_prefers_audit_quarters(monkeypatch, tmp_path):
     assert captured["requests"] and captured["requests"][0].name == "fina_audit"
     assert captured["start"] == "20240101"
     assert captured["end"] == "20240331"
+    assert captured["init_kwargs"]["max_retries"] == 5
 
 
 def test_run_export_strict_propagates_system_exit(monkeypatch):
@@ -224,6 +226,7 @@ def test_cmd_download_audit_only_falls_back_to_one_quarter(monkeypatch, tmp_path
     class DummyDownloader:
         def __init__(self, pro, data_dir, *, vip_pro=None, **kwargs):
             captured["data_dir"] = data_dir
+            captured["init_kwargs"] = kwargs
 
         def run(self, requests, *, start=None, end=None, refresh_periods=0):
             captured["requests"] = requests
@@ -288,3 +291,68 @@ def test_cmd_download_audit_only_falls_back_to_one_quarter(monkeypatch, tmp_path
     assert captured["requests"] and captured["requests"][0].name == "fina_audit"
     assert captured["start"] == "20240101"
     assert captured["end"] == "20240331"
+    assert captured["init_kwargs"]["max_retries"] == 5
+
+
+def test_cmd_download_audit_only_respects_explicit_max_retries(monkeypatch, tmp_path):
+    captured: dict[str, object] = {}
+
+    class DummyDownloader:
+        def __init__(self, pro, data_dir, *, vip_pro=None, **kwargs):
+            captured["init_kwargs"] = kwargs
+
+        def run(self, requests, *, start=None, end=None, refresh_periods=0):
+            captured["requests"] = requests
+
+    monkeypatch.setattr(download_cmd, "MarketDatasetDownloader", DummyDownloader)
+    dummy_ctx = ProContext(
+        any_client=object(), vip_client=object(), tokens=["tok"], vip_tokens=["tok"]
+    )
+    monkeypatch.setattr(download_cmd, "init_pro_api", lambda token: dummy_ctx)
+    monkeypatch.setattr(download_cmd, "ensure_enough_credits", lambda pro, required=5000: None)
+    monkeypatch.setattr(
+        download_cmd,
+        "load_yaml",
+        lambda path: {"max_retries": 2},
+    )
+
+    args = Namespace(
+        config=None,
+        datasets=None,
+        years=None,
+        quarters=None,
+        since=None,
+        until=None,
+        audit_quarters=None,
+        audit_years=None,
+        audit_only=True,
+        with_audit=False,
+        all=False,
+        fields="",
+        outdir=None,
+        prefix=None,
+        format=None,
+        token=None,
+        report_types=None,
+        allow_future=False,
+        recent_quarters=None,
+        data_dir=str(tmp_path),
+        use_vip=None,
+        max_per_minute=None,
+        state_path=None,
+        export_out_dir=None,
+        export_out_format=None,
+        export_kinds=None,
+        export_annual_strategy=None,
+        export_years=None,
+        export_strict=None,
+        export_enabled=None,
+        no_export=True,
+        max_retries=None,
+        progress="plain",
+    )
+
+    download_cmd.cmd_download(args)
+
+    assert captured["init_kwargs"]["max_retries"] == 2
+    assert captured["requests"] and captured["requests"][0].name == "fina_audit"
