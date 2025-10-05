@@ -138,7 +138,12 @@ def write_parquet_dataset(  # noqa: C901
                 continue
             combined = deduped
         else:
-            combined = partition_new
+            deduped = merge_and_deduplicate(
+                [partition_new], group_keys=group_keys or ()
+            )
+            if deduped is None:
+                continue
+            combined = deduped
         combined = combined.drop(columns=["year"], errors="ignore")
         with TemporaryDirectory(dir=dataset_root.as_posix()) as tmpdir:
             tmp_year_dir = Path(tmpdir) / f"year={year}"
