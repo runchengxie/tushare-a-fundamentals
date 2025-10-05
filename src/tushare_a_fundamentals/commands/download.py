@@ -192,6 +192,10 @@ def cmd_download(args: argparse.Namespace) -> None:
             cli_has_window or cfg_has_window or audit_cli_has_window or audit_cfg_has_window
         )
     cfg_missing = not bool(cfg_file)
+    recent_quarters_from_cli = getattr(args, "recent_quarters", None) is not None
+    recent_quarters_from_cfg = False
+    if isinstance(cfg_file, dict):
+        recent_quarters_from_cfg = cfg_file.get("recent_quarters") is not None
     if cfg_missing:
         defaults["datasets"] = DEFAULT_DATASET_CONFIG
     cli_overrides = _collect_cli_overrides(args)
@@ -217,6 +221,20 @@ def cmd_download(args: argparse.Namespace) -> None:
         elif audit_window_missing:
             cfg["quarters"] = 1
             cfg["years"] = None
+        if not recent_quarters_from_cli and not recent_quarters_from_cfg:
+            window_quarters_raw = cfg.get("quarters")
+            try:
+                window_quarters = int(window_quarters_raw) if window_quarters_raw else 0
+            except (TypeError, ValueError):
+                window_quarters = 0
+            if window_quarters > 0:
+                recent_raw = cfg.get("recent_quarters")
+                try:
+                    recent_value = int(recent_raw) if recent_raw is not None else 0
+                except (TypeError, ValueError):
+                    recent_value = 0
+                if recent_value > window_quarters:
+                    cfg["recent_quarters"] = window_quarters
     cfg["report_types"] = parse_report_types(cfg.get("report_types"))
     cfg["fields"] = normalize_fields(cfg.get("fields"))
     raw_progress = str(cfg.get("progress", "auto") or "auto").strip().lower()
