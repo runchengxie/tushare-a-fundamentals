@@ -298,12 +298,15 @@ funda export --kinds annual,single,cumulative \\
 ```
 
 同样默认读取 `data` 目录下的数据集，并导出最近 10 年（若在 `download` 阶段未指定 `--export-years` 则默认沿用下载窗口）。若手动指定的窗口大于缓存中已有的季度范围，CLI 会提示并仅导出当前目录下已构建的数据。可通过 `--dataset-root`（示例中切换到 `data/`）、`--years` 或 `--out-format` 参数微调。
+
 导出的结果统一使用 `ts_code` 作为证券主键，并按 `ts_code`、`end_date` 排序。
 
 ### 兼容旧版单数据集流程
 
 * 历史流程沿用 `out/` 目录作为默认输入/输出；如需复刻旧目录结构，可在命令中显式设置 `--dataset-root out` 或 `--out-dir out`。
+
 * `--raw-only`：只下载原始数据，不构建数仓派生层。
+
 * `--build-only`：跳过下载，仅由现有原始数据构建数仓派生层。
 
 ## 常见问题
