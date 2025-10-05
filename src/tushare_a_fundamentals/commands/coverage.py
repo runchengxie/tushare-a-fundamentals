@@ -66,11 +66,28 @@ def cmd_coverage(args: argparse.Namespace) -> None:
     if getattr(args, "csv", None):
         out_path = Path(args.csv)
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        missing = target[target["status"] == "missing"].copy()
+        missing = target[target["status"] == "missing"][["ts_code", "end_date"]]
         if missing.empty:
-            print("缺口清单为空，无需导出")
+            summary = pd.DataFrame(columns=["ts_code", "missing_periods", "missing_count"])
         else:
-            missing.to_csv(out_path, index=False)
+            summary = (
+                missing.groupby("ts_code")["end_date"]
+                .agg(
+                    missing_periods=lambda values: ";".join(
+                        sorted(values.astype(str))
+                    ),
+                    missing_count="count",
+                )
+                .reset_index()
+            )
+        report = pd.DataFrame({"ts_code": codes})
+        report = report.merge(summary, on="ts_code", how="left")
+        report["missing_periods"] = report["missing_periods"].fillna("")
+        report["missing_count"] = report["missing_count"].fillna(0).astype(int)
+        report.to_csv(out_path, index=False)
+        if missing.empty:
+            print(f"缺口清单为空，已导出汇总模板：{out_path}")
+        else:
             print(f"缺口清单已写入：{out_path}")
 
     if getattr(args, "by", None):
