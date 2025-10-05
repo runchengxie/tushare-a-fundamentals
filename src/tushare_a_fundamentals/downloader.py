@@ -27,6 +27,7 @@ from .storage import (
     merge_and_deduplicate,
     write_failure_report,
     write_parquet_dataset,
+    pq,
 )
 from .state_backend import JsonStateBackend, StateBackend
 from .progress import ProgressManager
@@ -34,6 +35,7 @@ from .progress import ProgressManager
 DATE_FMT = "%Y%m%d"
 MAX_PAGES = 200
 FRAME_FLUSH_THRESHOLD_ROWS = 200_000
+SAFETY_EPS = 0.1
 
 
 def today_yyyymmdd() -> str:
@@ -140,7 +142,8 @@ class RateLimiter:
             ok, wait_for = self.try_acquire()
             if ok:
                 return
-            time.sleep(max(wait_for, 0.05))
+            # pad a tiny epsilon so we re-enter strictly after the 60-second window
+            time.sleep(max(wait_for + SAFETY_EPS, 0.05))
 
     def wait(self) -> None:
         """Backward-compatible alias for ``acquire``."""
