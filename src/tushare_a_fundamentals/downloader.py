@@ -2,35 +2,16 @@ from __future__ import annotations
 
 import calendar
 import hashlib
-import json
 import re
-import shutil
 import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 import pandas as pd
-import pyarrow as pa
-import pyarrow.parquet as _pyarrow_parquet
-
-
-class _ParquetProxy:
-    def read_table(self, *args, **kwargs):
-        return _pyarrow_parquet.read_table(*args, **kwargs)
-
-    def write_table(self, *args, **kwargs):
-        return _pyarrow_parquet.write_table(*args, **kwargs)
-
-    def __getattr__(self, name: str):
-        return getattr(_pyarrow_parquet, name)
-
-
-pq = _ParquetProxy()
 
 from .common import (
     RetryExhaustedError,
@@ -40,183 +21,19 @@ from .common import (
     ensure_ts_code,
     last_publishable_period,
 )
+from .dataset_specs import DATASET_SPECS, DatasetSpec
+from .storage import (
+    ensure_dir,
+    merge_and_deduplicate,
+    write_failure_report,
+    write_parquet_dataset,
+)
 from .state_backend import JsonStateBackend, StateBackend
-from .transforms.deduplicate import mark_latest
 from .progress import ProgressManager
 
 DATE_FMT = "%Y%m%d"
 MAX_PAGES = 200
 FRAME_FLUSH_THRESHOLD_ROWS = 200_000
-
-
-@dataclass(frozen=True)
-class DatasetSpec:
-    name: str
-    api: str
-    vip_api: Optional[str] = None
-    period_field: Optional[str] = None
-    date_field: Optional[str] = None
-    date_start_param: str = "start_date"
-    date_end_param: str = "end_date"
-    primary_keys: Sequence[str] = field(default_factory=tuple)
-    dedup_group_keys: Sequence[str] = field(default_factory=tuple)
-    default_year_column: str = "ann_date"
-    default_start: str = "20000101"
-    fields: Optional[str] = None
-    report_types: Sequence[int] = field(default_factory=tuple)
-    type_param: Optional[str] = None
-    type_values: Sequence[str] = field(default_factory=tuple)
-    vip_supports_pagination: bool = False
-    api_supports_pagination: bool = True
-    extra_params: Dict[str, Any] = field(default_factory=dict)
-    requires_ts_code: bool = False
-    code_param: str = "ts_code"
-
-
-DATASET_SPECS: Dict[str, DatasetSpec] = {
-    "income": DatasetSpec(
-        name="income",
-        api="income",
-        vip_api="income_vip",
-        period_field="period",
-        date_field=None,
-        primary_keys=("ts_code", "end_date", "report_type"),
-        dedup_group_keys=("ts_code", "end_date"),
-        default_year_column="end_date",
-        report_types=(1,),
-        fields=None,
-        vip_supports_pagination=True,
-    ),
-    "balancesheet": DatasetSpec(
-        name="balancesheet",
-        api="balancesheet",
-        vip_api="balancesheet_vip",
-        period_field="period",
-        date_field=None,
-        primary_keys=("ts_code", "end_date", "report_type"),
-        dedup_group_keys=("ts_code", "end_date"),
-        default_year_column="end_date",
-        fields=None,
-        vip_supports_pagination=True,
-    ),
-    "cashflow": DatasetSpec(
-        name="cashflow",
-        api="cashflow",
-        vip_api="cashflow_vip",
-        period_field="period",
-        date_field=None,
-        primary_keys=("ts_code", "end_date", "report_type"),
-        dedup_group_keys=("ts_code", "end_date"),
-        default_year_column="end_date",
-        fields=None,
-        vip_supports_pagination=True,
-    ),
-    "forecast": DatasetSpec(
-        name="forecast",
-        api="forecast",
-        vip_api="forecast_vip",
-        period_field="period",
-        date_field=None,
-        primary_keys=("ts_code", "end_date", "type"),
-        dedup_group_keys=("ts_code", "end_date", "type"),
-        default_year_column="end_date",
-        fields=None,
-        vip_supports_pagination=True,
-    ),
-    "express": DatasetSpec(
-        name="express",
-        api="express",
-        vip_api="express_vip",
-        period_field="period",
-        date_field=None,
-        primary_keys=("ts_code", "end_date"),
-        dedup_group_keys=("ts_code", "end_date"),
-        default_year_column="end_date",
-        fields=None,
-        vip_supports_pagination=True,
-    ),
-    "dividend": DatasetSpec(
-        name="dividend",
-        api="dividend",
-        vip_api=None,
-        period_field=None,
-        date_field="ann_date",
-        primary_keys=(
-            "ts_code",
-            "ann_date",
-            "record_date",
-            "ex_date",
-            "imp_ann_date",
-        ),
-        dedup_group_keys=(
-            "ts_code",
-            "ann_date",
-            "record_date",
-            "ex_date",
-            "imp_ann_date",
-        ),
-        default_year_column="ann_date",
-        fields=None,
-    ),
-    "fina_indicator": DatasetSpec(
-        name="fina_indicator",
-        api="fina_indicator",
-        vip_api="fina_indicator_vip",
-        period_field="period",
-        date_field=None,
-        primary_keys=("ts_code", "end_date"),
-        dedup_group_keys=("ts_code", "end_date"),
-        default_year_column="end_date",
-        fields=None,
-        vip_supports_pagination=True,
-    ),
-    "fina_audit": DatasetSpec(
-        name="fina_audit",
-        api="fina_audit",
-        vip_api=None,
-        period_field="period",
-        date_field=None,
-        primary_keys=("ts_code", "end_date"),
-        dedup_group_keys=("ts_code", "end_date"),
-        default_year_column="end_date",
-        fields=None,
-        api_supports_pagination=True,
-        requires_ts_code=True,
-        code_param="ts_code",
-    ),
-    "fina_mainbz": DatasetSpec(
-        name="fina_mainbz",
-        api="fina_mainbz",
-        vip_api="fina_mainbz_vip",
-        period_field="period",
-        date_field=None,
-        primary_keys=("ts_code", "end_date", "bz_item", "type"),
-        dedup_group_keys=("ts_code", "end_date", "bz_item", "type"),
-        default_year_column="end_date",
-        type_param="type",
-        type_values=("P", "D"),
-        fields=None,
-        vip_supports_pagination=True,
-    ),
-    "disclosure_date": DatasetSpec(
-        name="disclosure_date",
-        api="disclosure_date",
-        vip_api=None,
-        period_field="end_date",
-        date_field=None,
-        primary_keys=(
-            "ts_code",
-            "end_date",
-            "ann_date",
-            "pre_date",
-            "actual_date",
-        ),
-        dedup_group_keys=("ts_code", "end_date"),
-        default_year_column="end_date",
-        fields=None,
-        api_supports_pagination=True,
-    ),
-}
 
 
 def today_yyyymmdd() -> str:
@@ -292,115 +109,43 @@ def move_quarters(period: str, delta: int) -> str:
     return shifted.strftime(DATE_FMT)
 
 
-def ensure_dir(path: str) -> None:
-    Path(path).mkdir(parents=True, exist_ok=True)
-
-
-def write_parquet_dataset(  # noqa: C901
-    df: pd.DataFrame,
-    root: str,
-    dataset: str,
-    year_col: str,
-    *,
-    group_keys: Sequence[str] | None = None,
-) -> bool:
-    if df.empty:
-        return True
-    frame = df.copy()
-    frame.columns = [c.lower() for c in frame.columns]
-    if year_col not in frame.columns:
-        frame[year_col] = None
-    frame[year_col] = frame[year_col].astype(str)
-    years = frame[year_col].str[:4]
-    frame["year"] = years.fillna("unknown").replace(
-        to_replace=r"(?i)nan|nat|none", value="unknown", regex=True
-    )
-    dataset_root = Path(root) / dataset
-    ensure_dir(dataset_root.as_posix())
-    updated_any = False
-    for year in sorted({y for y in frame["year"].dropna()}):
-        partition_new = frame[frame["year"] == year].copy()
-        if partition_new.empty:
-            continue
-        target_dir = dataset_root / f"year={year}"
-        existing = pd.DataFrame()
-        if target_dir.exists():
-            try:
-                tables = [
-                    pq.read_table(p.as_posix()) for p in target_dir.glob("*.parquet")
-                ]
-                if tables:
-                    existing = pa.concat_tables(tables).to_pandas()
-            except Exception as exc:  # pragma: no cover - I/O errors
-                print(f"警告：读取 {target_dir} 失败：{exc}")
-        if not existing.empty:
-            existing.columns = [c.lower() for c in existing.columns]
-            if "year" not in existing.columns:
-                existing["year"] = year
-        all_cols = sorted({*partition_new.columns, *existing.columns})
-        partition_new = partition_new.reindex(columns=all_cols)
-        if not existing.empty:
-            existing = existing.reindex(columns=all_cols)
-        frames_to_concat = [partition_new]
-        if not existing.empty:
-            frames_to_concat.insert(0, existing)
-        combined = _concat_non_empty(frames_to_concat)
-        if "retrieved_at" in combined.columns:
-            combined["retrieved_at"] = pd.to_datetime(
-                combined["retrieved_at"], errors="coerce"
-            )
-        dedup_keys = [c for c in (group_keys or []) if c in combined.columns]
-        extra_sort: List[str] = []
-        if "retrieved_at" in combined.columns:
-            extra_sort.append("retrieved_at")
-        if dedup_keys:
-            flagged = mark_latest(
-                combined,
-                group_keys=dedup_keys,
-                extra_sort_keys=extra_sort,
-            )
-            if "is_latest" in flagged.columns:
-                combined = flagged[flagged["is_latest"] == 1].drop(
-                    columns=["is_latest"]
-                )
-            else:
-                combined = flagged
-            combined = combined.drop_duplicates(subset=dedup_keys)
-        else:
-            combined = combined.drop_duplicates()
-        combined = combined.sort_index()
-        with TemporaryDirectory(dir=dataset_root.as_posix()) as tmpdir:
-            tmp_year_dir = Path(tmpdir) / f"year={year}"
-            ensure_dir(tmp_year_dir.as_posix())
-            table = pa.Table.from_pandas(combined, preserve_index=False)
-            pq.write_table(table, (tmp_year_dir / "data.parquet").as_posix())
-            if target_dir.exists():
-                shutil.rmtree(target_dir)
-            shutil.move(tmp_year_dir.as_posix(), target_dir.as_posix())
-        updated_any = True
-    return updated_any
-
-
 class RateLimiter:
     def __init__(self, max_per_minute: int = 90) -> None:
-        self.max_per_minute = max_per_minute
+        self.max_per_minute = max(int(max_per_minute), 0)
         self.calls: deque[float] = deque()
         self._lock = threading.Lock()
 
-    def wait(self) -> None:
+    def try_acquire(self, now: Optional[float] = None) -> tuple[bool, float]:
+        """Attempt to reserve a call slot without sleeping."""
+
+        if self.max_per_minute <= 0:
+            return True, 0.0
+        timestamp = time.time() if now is None else now
+        with self._lock:
+            window_start = timestamp - 60.0
+            while self.calls and self.calls[0] < window_start:
+                self.calls.popleft()
+            if len(self.calls) < self.max_per_minute:
+                self.calls.append(timestamp)
+                return True, 0.0
+            if not self.calls:
+                return False, 0.05
+            wait_for = self.calls[0] + 60.0 - timestamp
+            return False, max(wait_for, 0.0)
+
+    def acquire(self) -> None:
         if self.max_per_minute <= 0:
             return
         while True:
-            with self._lock:
-                now = time.time()
-                window_start = now - 60.0
-                while self.calls and self.calls[0] < window_start:
-                    self.calls.popleft()
-                if len(self.calls) < self.max_per_minute:
-                    self.calls.append(now)
-                    return
-                sleep_for = self.calls[0] + 60.1 - now
-            time.sleep(max(sleep_for, 0.05))
+            ok, wait_for = self.try_acquire()
+            if ok:
+                return
+            time.sleep(max(wait_for, 0.05))
+
+    def wait(self) -> None:
+        """Backward-compatible alias for ``acquire``."""
+
+        self.acquire()
 
 
 @dataclass(frozen=True)
@@ -627,7 +372,10 @@ class MarketDatasetDownloader:
         if not accumulator.frames:
             return True
         frames = accumulator.pop_frames()
-        combined = self._concat_and_dedup(frames, spec)
+        combined = merge_and_deduplicate(
+            frames,
+            group_keys=spec.dedup_group_keys or spec.primary_keys,
+        )
         if combined is None:
             return True
         return write_parquet_dataset(
@@ -635,6 +383,26 @@ class MarketDatasetDownloader:
             self.data_dir,
             spec.name,
             spec.default_year_column,
+            group_keys=spec.dedup_group_keys or spec.primary_keys,
+        )
+
+    # Backwards-compatible wrappers kept for tests and external callers. These
+    # delegate to the shared storage helpers.
+    def _record_failures(
+        self,
+        spec: DatasetSpec,
+        entries: Sequence[Dict[str, Any]],
+        kind: str,
+    ) -> None:
+        write_failure_report(self.data_dir, spec.name, kind, entries)
+
+    def _concat_and_dedup(
+        self,
+        frames: Sequence[pd.DataFrame],
+        spec: DatasetSpec,
+    ) -> Optional[pd.DataFrame]:
+        return merge_and_deduplicate(
+            frames,
             group_keys=spec.dedup_group_keys or spec.primary_keys,
         )
 
@@ -671,7 +439,7 @@ class MarketDatasetDownloader:
 
         write_ok = write_ok and self._flush_accumulator(accumulator, spec)
         failure_entries = accumulator.failures
-        self._record_failures(spec, failure_entries, "periods")
+        write_failure_report(self.data_dir, spec.name, "periods", failure_entries)
         if write_ok:
             for dataset, key, value in accumulator.updates:
                 self.state.set(dataset, key, value)
@@ -725,7 +493,7 @@ class MarketDatasetDownloader:
 
         write_ok = write_ok and self._flush_accumulator(accumulator, spec)
         failure_entries = accumulator.failures
-        self._record_failures(spec, failure_entries, "per_stock")
+        write_failure_report(self.data_dir, spec.name, "per_stock", failure_entries)
         if write_ok:
             for dataset, key, value in accumulator.updates:
                 self.state.set(dataset, key, value)
@@ -1035,7 +803,7 @@ class MarketDatasetDownloader:
         failure_entries = [
             entry for entry in window_records.values() if len(entry) > 1
         ]
-        self._record_failures(spec, failure_entries, "windows")
+        write_failure_report(self.data_dir, spec.name, "windows", failure_entries)
         if write_ok and last_contiguous is not None:
             self.state.set(spec.name, state_key, last_contiguous)
             if failure_entries:
@@ -1471,7 +1239,7 @@ class MarketDatasetDownloader:
                     call_params.setdefault("limit", limit)
                 if fields:
                     call_params.setdefault("fields", fields)
-                limiter.wait()
+                limiter.acquire()
                 df = func(**call_params)
                 if df is None or df.empty:
                     break
@@ -1521,82 +1289,6 @@ class MarketDatasetDownloader:
         except RetryExhaustedError as exc:
             self._log(f"警告：调用 {api_name} 失败：{exc.last_exception}")
             return None
-
-    def _record_failures(
-        self,
-        spec: DatasetSpec,
-        entries: Sequence[Dict[str, Any]],
-        kind: str,
-    ) -> None:
-        failure_root = Path(self.data_dir) / "_state" / "failures"
-        failure_path = failure_root / f"{spec.name}_{kind}.json"
-        if not entries:
-            if failure_path.exists():
-                try:
-                    failure_path.unlink()
-                except OSError:
-                    pass
-            return
-        ensure_dir(failure_root.as_posix())
-        payload = {
-            "dataset": spec.name,
-            "kind": kind,
-            "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "entries": entries,
-        }
-        failure_path.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2),
-            "utf-8",
-        )
-
-    def _concat_and_dedup(
-        self,
-        frames: Sequence[pd.DataFrame],
-        spec: DatasetSpec,
-    ) -> Optional[pd.DataFrame]:
-        valid = [df for df in frames if df is not None and not df.empty]
-        if not valid:
-            return None
-        prepared: List[pd.DataFrame] = []
-        timestamp = pd.Timestamp.utcnow()
-        for df in valid:
-            frame = df.copy()
-            if "retrieved_at" not in frame.columns:
-                frame["retrieved_at"] = timestamp
-            prepared.append(frame)
-        combined = _concat_non_empty(prepared)
-        for col in ("ts_code", "end_date", "ann_date"):
-            if col in combined.columns:
-                combined[col] = combined[col].astype(str)
-        dedup_keys = [
-            c
-            for c in (spec.dedup_group_keys or spec.primary_keys)
-            if c in combined.columns
-        ]
-        if "retrieved_at" in combined.columns:
-            combined["retrieved_at"] = pd.to_datetime(
-                combined["retrieved_at"], errors="coerce"
-            )
-        extra_sort_keys: List[str] = []
-        if "retrieved_at" in combined.columns:
-            extra_sort_keys.append("retrieved_at")
-        if dedup_keys:
-            flagged = mark_latest(
-                combined,
-                group_keys=dedup_keys,
-                extra_sort_keys=extra_sort_keys,
-            )
-            if "is_latest" in flagged.columns:
-                combined = flagged[flagged["is_latest"] == 1].drop(
-                    columns=["is_latest"]
-                )
-            else:
-                combined = flagged
-            combined = combined.drop_duplicates(subset=dedup_keys)
-        else:
-            combined = combined.drop_duplicates()
-        return combined
-
 
 def parse_dataset_requests(raw: Any) -> List[DatasetRequest]:
     if raw is None:

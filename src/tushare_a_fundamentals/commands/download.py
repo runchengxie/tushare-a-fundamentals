@@ -1,14 +1,13 @@
 import argparse
-import os
 import sys
 from argparse import Namespace
 
 from ..common import (
     DEFAULT_FIELDS,
-    _periods_from_cfg,
-    ensure_enough_credits,
+    _periods_from_cfg as _periods_from_cfg_fn,
+    ensure_enough_credits as _ensure_enough_credits,
     eprint,
-    init_pro_api,
+    init_pro_api as _init_pro_api,
     load_yaml,
     merge_config,
     normalize_fields,
@@ -16,11 +15,36 @@ from ..common import (
 )
 from ..downloader import (
     DatasetRequest,
-    MarketDatasetDownloader,
+    MarketDatasetDownloader as _MarketDatasetDownloader,
     parse_dataset_requests,
-    parse_yyyymmdd,
 )
 from .export import cmd_export
+
+# Backwards compatibility for tests that patch the downloader in this module.
+MarketDatasetDownloader = _MarketDatasetDownloader
+from ..workflows.download import (
+    DownloadExecutionError,
+    run_download_pipeline,
+)
+
+
+def _run_export(export_args: Namespace, strict: bool | None) -> None:
+    try:
+        cmd_export(export_args)
+    except SystemExit as exc:
+        if strict:
+            raise
+        eprint(f"警告：导出失败（已保留 parquet）：{exc}")
+    except Exception as exc:  # pragma: no cover - defensive guard
+        eprint(f"警告：导出失败（已保留 parquet）：{exc}")
+        if strict:
+            raise
+
+
+# Keep frequently patched helpers available for tests.
+init_pro_api = _init_pro_api
+_periods_from_cfg = _periods_from_cfg_fn
+ensure_enough_credits = _ensure_enough_credits
 
 
 def _download_defaults() -> dict:
@@ -91,61 +115,6 @@ def _collect_cli_overrides(args: argparse.Namespace) -> dict:
     if getattr(args, "no_export", False):
         overrides["export_enabled"] = False
     return overrides
-
-
-def _build_export_args(cfg: dict) -> Namespace | None:
-    if not cfg.get("export_enabled", False):
-        return None
-    data_dir = cfg.get("data_dir") or "data"
-    export_out_dir_cfg = cfg.get("export_out_dir")
-    if export_out_dir_cfg:
-        export_out_dir = export_out_dir_cfg
-    else:
-        export_out_dir = os.path.normpath(cfg.get("outdir") or data_dir)
-
-    export_kinds_cfg = cfg.get("export_kinds")
-    if isinstance(export_kinds_cfg, (list, tuple, set)):
-        export_kinds = ",".join(
-            str(k).strip() for k in export_kinds_cfg if str(k).strip()
-        )
-    elif export_kinds_cfg is None:
-        export_kinds = ""
-    else:
-        export_kinds = str(export_kinds_cfg)
-
-    export_years = cfg.get("export_years")
-    if export_years is None:
-        export_years = cfg.get("years")
-
-    return Namespace(
-        dataset_root=data_dir,
-        years=export_years,
-        kinds=export_kinds,
-        annual_strategy=cfg.get("export_annual_strategy", "cumulative"),
-        out_format=(cfg.get("export_out_format") or "csv").lower(),
-        out_dir=export_out_dir,
-        prefix=cfg.get("prefix") or "income",
-        flat_datasets=cfg.get("export_flat_datasets", "auto"),
-        flat_exclude=cfg.get("export_flat_exclude", ""),
-        split_by=cfg.get("export_split_by", "none"),
-        gzip=bool(cfg.get("export_gzip", False)),
-        no_income=bool(cfg.get("export_no_income", False)),
-        no_flat=bool(cfg.get("export_no_flat", False)),
-        progress=cfg.get("progress", "auto"),
-    )
-
-
-def _run_export(export_args: Namespace, strict: bool | None) -> None:
-    try:
-        cmd_export(export_args)
-    except SystemExit as exc:
-        if strict:
-            raise
-        eprint(f"警告：导出失败（已保留 parquet）：{exc}")
-    except Exception as exc:  # pragma: no cover - defensive guard
-        eprint(f"警告：导出失败（已保留 parquet）：{exc}")
-        if strict:
-            raise
 
 
 def cmd_download(args: argparse.Namespace) -> None:
@@ -267,11 +236,20 @@ def cmd_download(args: argparse.Namespace) -> None:
     for msg in info_msgs:
         print(msg)
 
-    _run_multi_dataset_flow(
-        cfg,
-        dataset_requests,
-        use_vip=use_vip,
-    )
+    try:
+        run_download_pipeline(
+            cfg,
+            dataset_requests,
+            use_vip=use_vip,
+            downloader_cls=MarketDatasetDownloader,
+            init_pro=init_pro_api,
+            ensure_credits=ensure_enough_credits,
+            periods_from_cfg=_periods_from_cfg,
+            export_callback=_run_export,
+        )
+    except DownloadExecutionError as exc:
+        eprint(f"错误：{exc.message}")
+        sys.exit(exc.exit_code)
 
 
 AUDIT_DATASET_NAME = "fina_audit"
@@ -444,55 +422,3 @@ def _build_dataset_plan(
     )
 
     return dataset_requests, info_msgs, warn_msgs
-
-
-def _run_multi_dataset_flow(
-    cfg: dict,
-    dataset_requests: list[DatasetRequest],
-    *,
-    use_vip: bool,
-) -> None:
-    ctx = init_pro_api(cfg.get("token"))
-    if use_vip:
-        if not ctx.vip_tokens:
-            eprint(
-                "错误：未检测到满足 VIP 门槛（≥5000 积分）的 token。"
-                "如需批量抓取，请为至少一个 token 提供 5000 积分或设置 --use-vip=false。"
-            )
-            sys.exit(2)
-        ensure_enough_credits(ctx.vip_or_default())
-    data_dir = cfg.get("data_dir") or "data"
-    max_per_minute = cfg.get("max_per_minute")
-    if max_per_minute is None:
-        max_per_minute = 90
-    start_raw = cfg.get("since")
-    end_raw = cfg.get("until")
-    if not start_raw or not end_raw:
-        periods_window = _periods_from_cfg(cfg)
-        if periods_window:
-            if not start_raw:
-                start_raw = periods_window[0]
-            if not end_raw:
-                end_raw = periods_window[-1]
-
-    downloader = MarketDatasetDownloader(
-        ctx.any_client,
-        data_dir,
-        vip_pro=ctx.vip_client,
-        use_vip=use_vip,
-        max_per_minute=max_per_minute,
-        state_path=cfg.get("state_path"),
-        allow_future=bool(cfg.get("allow_future")),
-        max_retries=int(cfg.get("max_retries", 3)),
-        progress_mode=cfg.get("progress", "auto"),
-    )
-
-    downloader.run(
-        dataset_requests,
-        start=parse_yyyymmdd(start_raw),
-        end=parse_yyyymmdd(end_raw),
-        refresh_periods=int(cfg.get("recent_quarters") or 0),
-    )
-    export_args = _build_export_args(cfg)
-    if export_args is not None:
-        _run_export(export_args, cfg.get("export_strict"))
