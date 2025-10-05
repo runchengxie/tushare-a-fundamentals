@@ -16,7 +16,21 @@ from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 import pandas as pd
 import pyarrow as pa
-import pyarrow.parquet as pq
+import pyarrow.parquet as _pyarrow_parquet
+
+
+class _ParquetProxy:
+    def read_table(self, *args, **kwargs):
+        return _pyarrow_parquet.read_table(*args, **kwargs)
+
+    def write_table(self, *args, **kwargs):
+        return _pyarrow_parquet.write_table(*args, **kwargs)
+
+    def __getattr__(self, name: str):
+        return getattr(_pyarrow_parquet, name)
+
+
+pq = _ParquetProxy()
 
 from .common import (
     RetryExhaustedError,
@@ -378,14 +392,14 @@ class RateLimiter:
             return
         while True:
             with self._lock:
-                now = time.monotonic()
+                now = time.time()
                 window_start = now - 60.0
                 while self.calls and self.calls[0] < window_start:
                     self.calls.popleft()
                 if len(self.calls) < self.max_per_minute:
                     self.calls.append(now)
                     return
-                sleep_for = self.calls[0] + 60.0 - now
+                sleep_for = self.calls[0] + 60.1 - now
             time.sleep(max(sleep_for, 0.05))
 
 

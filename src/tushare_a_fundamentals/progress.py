@@ -48,12 +48,18 @@ class PlainTicker:
         fail: Optional[int] = None,
     ) -> None:
         self.done += step
-        if self.total >= 0:
-            self.done = min(self.done, self.total)
         if ok is not None:
             self.ok = ok
         if fail is not None:
             self.fail = fail
+        processed = (self.ok or 0) + (self.fail or 0)
+        if processed > 0:
+            if self.total > 0:
+                self.done = min(max(self.done, processed), self.total)
+            else:
+                self.done = max(self.done, processed)
+        elif self.total >= 0:
+            self.done = min(self.done, self.total)
         now = time.time()
         if (
             now - self.last_print >= self.every_sec
