@@ -151,8 +151,16 @@ def _run_export(export_args: Namespace, strict: bool | None) -> None:
 def cmd_download(args: argparse.Namespace) -> None:
     cfg_file = load_yaml(getattr(args, "config", None))
     defaults = _download_defaults()
+    audit_only = bool(getattr(args, "audit_only", False))
+    cli_max_retries_provided = getattr(args, "max_retries", None) is not None
+    cfg_max_retries_provided = False
+    if isinstance(cfg_file, dict):
+        cfg_max_retries_value = cfg_file.get("max_retries")
+        cfg_max_retries_provided = cfg_max_retries_value is not None
+    if audit_only and not cli_max_retries_provided and not cfg_max_retries_provided:
+        defaults["max_retries"] = 5
     audit_window_missing = False
-    if getattr(args, "audit_only", False):
+    if audit_only:
         period_flag_names = ("since", "until", "quarters", "years")
         audit_flag_names = ("audit_quarters", "audit_years")
 
@@ -188,7 +196,7 @@ def cmd_download(args: argparse.Namespace) -> None:
         defaults["datasets"] = DEFAULT_DATASET_CONFIG
     cli_overrides = _collect_cli_overrides(args)
     cfg = merge_config(cli_overrides, cfg_file, defaults)
-    if getattr(args, "audit_only", False):
+    if audit_only:
         period_flag_names = ("since", "until", "quarters", "years")
 
         def _provided(value: object) -> bool:

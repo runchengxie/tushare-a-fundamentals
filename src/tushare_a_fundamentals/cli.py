@@ -149,7 +149,7 @@ def parse_cli() -> argparse.Namespace:
         "--max-retries",
         dest="max_retries",
         type=int,
-        help="接口重试次数上限（默认 3）",
+        help="接口重试次数上限（默认 3；--audit-only 时默认 5）",
     )
     sp_dl.add_argument(
         "--since", type=str, help="起始日期 YYYY-MM-DD（优先于 --years/--quarters）"
