@@ -257,7 +257,7 @@ class ProPool:
 
     def _acquire_client(self) -> _TokenClient:
         while True:
-            attempt_time = time.monotonic()
+            attempt_time = time.time()
             sleep_for = 0.05
             with self._lock:
                 next_ready, _, client = heappop(self._availability)
@@ -268,7 +268,7 @@ class ProPool:
             if client is None:
                 time.sleep(max(sleep_for, 0.05))
                 continue
-            now = time.monotonic()
+            now = time.time()
             acquired, wait = client.try_acquire(now)
             next_available = now if wait <= 0 else now + wait
             with self._lock:
