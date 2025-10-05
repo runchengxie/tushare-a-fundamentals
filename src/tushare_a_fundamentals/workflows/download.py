@@ -98,7 +98,13 @@ def run_download_pipeline(
     exporter = export_callback or run_export
 
     ctx = init_fn(cfg.get("token"))
-    if use_vip:
+
+    dataset_requests = tuple(dataset_requests)
+    is_audit_only = bool(dataset_requests) and all(
+        getattr(req, "name", None) == "fina_audit" for req in dataset_requests
+    )
+
+    if use_vip and not is_audit_only:
         if not ctx.vip_tokens:
             raise DownloadExecutionError(
                 "未检测到满足 VIP 门槛（≥5000 积分）的 token。"
