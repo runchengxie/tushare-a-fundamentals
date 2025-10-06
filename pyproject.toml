@@ -7,13 +7,13 @@ authors = [{ name = "Richard" }]
 license = "MIT"
 requires-python = ">=3.10,<3.13"
 dependencies = [
-    "tushare>=1.2.89",
-    "pandas>=1.5.0",
-    "pyyaml>=6.0",
-    "numpy>=1.24.0",
-    "python-dotenv>=1.0.0",
-    "pyarrow>=14.0.0",
-    "rich>=13.7.0",
+  "tushare>=1.2.89",
+  "pandas>=1.5.0",
+  "pyyaml>=6.0",
+  "numpy>=1.24.0",
+  "python-dotenv>=1.0.0",
+  "pyarrow>=14.0.0",
+  "rich>=13.7.0",
 ]
 
 [project.scripts]
@@ -21,9 +21,9 @@ funda = "tushare_a_fundamentals.cli:main"
 
 [dependency-groups]
 dev = [
-    "pytest>=7.0.0",
-    "ruff>=0.1.0",
-    "pytest-cov>=4.0.0",
+  "pytest>=7.0.0",
+  "ruff>=0.1.0",
+  "pytest-cov>=4.0.0",
 ]
 
 [build-system]
@@ -36,7 +36,7 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["src"]
 include = [
-    "tushare_a_fundamentals*",
+  "tushare_a_fundamentals*",
 ]
 
 [tool.ruff]
@@ -55,7 +55,7 @@ max-complexity = 10
 # Do not force the coverage plugin to avoid failures when pytest-cov is missing
 addopts = []
 markers = [
-    "unit: unit tests",
-    "integration: integration tests",
+  "unit: unit tests",
+  "integration: integration tests",
 ]
 testpaths = ["tests"]
