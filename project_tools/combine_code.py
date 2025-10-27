@@ -39,7 +39,7 @@ EXCLUDE_DIRS_ANYWHERE: Set[str] = {
 # This allows keeping nested directories with the same name (e.g., 'src/app/data').
 EXCLUDE_DIRS_ROOT_ONLY: Set[str] = {
     "data",  # User-specific data, not source code
-#     "tests",
+    "tests",
     "project_tools",
     "docs",
 }
@@ -115,9 +115,9 @@ def process_notebook(filepath: Path) -> Optional[str]:
                 continue
 
             if cell_type == "code":
-                content_parts.append(f"# --- Code Cell {i+1} ---\n{source}\n")
+                content_parts.append(f"# --- Code Cell {i + 1} ---\n{source}\n")
             elif cell_type == "markdown":
-                content_parts.append(f"# --- Markdown Cell {i+1} ---\n{source}\n")
+                content_parts.append(f"# --- Markdown Cell {i + 1} ---\n{source}\n")
 
         return "\n".join(content_parts)
     except Exception as e:
