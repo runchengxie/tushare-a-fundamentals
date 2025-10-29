@@ -41,7 +41,7 @@ EXCLUDE_DIRS_ROOT_ONLY: Set[str] = {
     "data",  # User-specific data, not source code
     "tests",
     "project_tools",
-    "docs",
+    #     "docs",
 }
 
 # Directory name patterns to exclude (e.g., any directory ending with .egg-info).

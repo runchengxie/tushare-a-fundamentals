@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, Sequence
 
+from .meta.doc_fields import DOC_FIELDS
+
 
 @dataclass(frozen=True)
 class DatasetSpec:
@@ -32,6 +34,13 @@ class DatasetSpec:
     code_param: str = "ts_code"
 
 
+def _fields_for(name: str) -> Optional[str]:
+    fields = DOC_FIELDS.get(name)
+    if not fields:
+        return None
+    return ",".join(fields)
+
+
 DATASET_SPECS: Dict[str, DatasetSpec] = {
     "income": DatasetSpec(
         name="income",
@@ -43,7 +52,7 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         dedup_group_keys=("ts_code", "end_date"),
         default_year_column="end_date",
         report_types=(1,),
-        fields=None,
+        fields=_fields_for("income"),
         vip_supports_pagination=True,
     ),
     "balancesheet": DatasetSpec(
@@ -55,7 +64,7 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         primary_keys=("ts_code", "end_date", "report_type"),
         dedup_group_keys=("ts_code", "end_date"),
         default_year_column="end_date",
-        fields=None,
+        fields=_fields_for("balancesheet"),
         vip_supports_pagination=True,
     ),
     "cashflow": DatasetSpec(
@@ -67,7 +76,7 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         primary_keys=("ts_code", "end_date", "report_type"),
         dedup_group_keys=("ts_code", "end_date"),
         default_year_column="end_date",
-        fields=None,
+        fields=_fields_for("cashflow"),
         vip_supports_pagination=True,
     ),
     "forecast": DatasetSpec(
@@ -79,7 +88,7 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         primary_keys=("ts_code", "end_date", "type"),
         dedup_group_keys=("ts_code", "end_date", "type"),
         default_year_column="end_date",
-        fields=None,
+        fields=_fields_for("forecast"),
         vip_supports_pagination=True,
     ),
     "express": DatasetSpec(
@@ -91,7 +100,7 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         primary_keys=("ts_code", "end_date"),
         dedup_group_keys=("ts_code", "end_date"),
         default_year_column="end_date",
-        fields=None,
+        fields=_fields_for("express"),
         vip_supports_pagination=True,
     ),
     "dividend": DatasetSpec(
@@ -115,7 +124,7 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
             "imp_ann_date",
         ),
         default_year_column="ann_date",
-        fields=None,
+        fields=_fields_for("dividend"),
     ),
     "fina_indicator": DatasetSpec(
         name="fina_indicator",
@@ -126,7 +135,7 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         primary_keys=("ts_code", "end_date"),
         dedup_group_keys=("ts_code", "end_date"),
         default_year_column="end_date",
-        fields=None,
+        fields=_fields_for("fina_indicator"),
         vip_supports_pagination=True,
     ),
     "fina_audit": DatasetSpec(
@@ -138,7 +147,7 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         primary_keys=("ts_code", "end_date"),
         dedup_group_keys=("ts_code", "end_date"),
         default_year_column="end_date",
-        fields=None,
+        fields=_fields_for("fina_audit"),
         api_supports_pagination=True,
         requires_ts_code=True,
         code_param="ts_code",
@@ -154,7 +163,7 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         default_year_column="end_date",
         type_param="type",
         type_values=("P", "D"),
-        fields=None,
+        fields=_fields_for("fina_mainbz"),
         vip_supports_pagination=True,
     ),
     "disclosure_date": DatasetSpec(
@@ -172,11 +181,10 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         ),
         dedup_group_keys=("ts_code", "end_date"),
         default_year_column="end_date",
-        fields=None,
+        fields=_fields_for("disclosure_date"),
         api_supports_pagination=True,
     ),
 }
 
 
 __all__ = ["DatasetSpec", "DATASET_SPECS"]
-
