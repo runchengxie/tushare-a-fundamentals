@@ -14,6 +14,7 @@ import pyarrow.compute as pc
 import pyarrow.csv as pcsv
 import pyarrow.dataset as ds
 import pyarrow.parquet as pq
+import pyarrow.types as patypes
 
 from ..common import (
     _concat_non_empty,
@@ -265,12 +266,7 @@ def _write_dataset(
     progress: Optional[ProgressManager] = None,
 ) -> bool:
     try:
-        partitioning = ds.partitioning(
-            pa.schema([pa.field("year", pa.string())]), flavor="hive"
-        )
-        dataset = ds.dataset(
-            source.as_posix(), format="parquet", partitioning=partitioning
-        )
+        dataset = _build_dataset(source)
     except (FileNotFoundError, ValueError, pa.ArrowInvalid, pa.ArrowTypeError):
         return False
 
@@ -322,6 +318,59 @@ def _log_progress(progress: Optional[ProgressManager], message: str) -> None:
         print(message)
 
 
+def _build_dataset(source: Path) -> ds.Dataset:
+    partitioning = ds.partitioning(
+        pa.schema([pa.field("year", pa.string())]), flavor="hive"
+    )
+    dataset = ds.dataset(
+        source.as_posix(), format="parquet", partitioning=partitioning
+    )
+    schema = dataset.schema
+    adjusted_schema = _resolve_null_fields(dataset, schema)
+    if adjusted_schema is not schema:
+        dataset = ds.dataset(
+            source.as_posix(),
+            format="parquet",
+            partitioning=partitioning,
+            schema=adjusted_schema,
+        )
+    return dataset
+
+
+def _resolve_null_fields(dataset: ds.Dataset, schema: pa.Schema) -> pa.Schema:
+    replacements: dict[str, pa.DataType] = {}
+    null_field_names = [
+        field.name for field in schema if patypes.is_null(field.type)
+    ]
+    if not null_field_names:
+        return schema
+
+    for fragment in dataset.get_fragments():
+        fragment_schema = getattr(fragment, "physical_schema", None)
+        if fragment_schema is None:
+            fragment_schema = fragment.schema
+        for name in list(null_field_names):
+            idx = fragment_schema.get_field_index(name)
+            if idx == -1:
+                continue
+            fragment_field = fragment_schema.field(idx)
+            if patypes.is_null(fragment_field.type):
+                continue
+            replacements[name] = fragment_field.type
+            null_field_names.remove(name)
+        if not null_field_names:
+            break
+
+    if not replacements:
+        return schema
+
+    new_fields = [
+        field.with_type(replacements.get(field.name, field.type))
+        for field in schema
+    ]
+    return pa.schema(new_fields, metadata=schema.metadata)
+
+
 def _build_output_path(target_dir: Path, base: str, fmt: str, gzip_enabled: bool) -> Path:
     target_dir.mkdir(parents=True, exist_ok=True)
     suffix = fmt.lower()
@@ -367,4 +416,3 @@ def _cast_single(array: pa.Array, target: pa.DataType) -> pa.Array:
     except Exception:  # pragma: no cover - defensive fallback
         values = [None if value is None else str(value) for value in array.to_pylist()]
         return pa.array(values, type=pa.string())
-
