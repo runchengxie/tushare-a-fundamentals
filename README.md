@@ -39,7 +39,8 @@
 
 ```bash
 cp .env.example .env        # 填好 TUSHARE_TOKEN
-funda download              # 批量除了审计意见以外的所有数据下载并缓存（默认不导出 CSV）
+funda download              # 批量下载常用数据（默认跳过 dividend/fina_audit，不导出 CSV）
+funda download --dividend-only # dividend 需要逐日抓取，单独运行以节省时间
 funda download --audit-only # 审计意见由于需要逐个个股遍历，运行时间较长，单独运行
 funda export                # 导出已下载的数据
 ```
@@ -49,6 +50,8 @@ funda export                # 导出已下载的数据
 * 缺少 `config.yml/config.yaml` 时会自动使用默认参数；日志会提示可以复制模板来自定义。
 
 * 该项目的默认参数的设计原则是默认下载过去10年，也就是40个季度的有效数据
+
+* dividend 接口不支持区间抓取，必须逐日轮询，按默认窗口执行可能耗时数小时；因此默认不随 `funda download` 运行，可通过 `funda download --dividend-only` 单独下载
 
 * 财务审计意见的下载需要逐个个股遍历，如采用10年的逻辑，下载时间约20小时，故`funda download --audit-only`的默认行为是下载最近一个季度，预计耗时28分钟。但是也可以通过`funda download --audit-only --year 1`或者`funda download --audit-only --quarters 2`以及修改`config.yaml`等方式强制修改下载年份范围
 
@@ -60,9 +63,11 @@ funda export                # 导出已下载的数据
 
 ```bash
 funda download --datasets income balancesheet cashflow forecast express \
-  dividend fina_indicator fina_audit fina_mainbz disclosure_date \
+  fina_indicator fina_audit fina_mainbz disclosure_date \
   --vip --data-dir data --since 2010-01-01
 ```
+
+dividend 数据需单独执行 `funda download --dividend-only`，以免常规批量任务长时间占用资源。
 
 要长期保存增量游标，可在配置文件中启用：
 
@@ -76,7 +81,7 @@ datasets:
     report_types: [1]       # 报表类型：合并报表
   - name: forecast          # 业绩预告
   - name: express           # 业绩快报
-  - name: dividend          # 分红信息
+  # dividend 数据需单独执行 `funda download --dividend-only`（逐日抓取耗时较长）
   - name: fina_indicator    # 财务指标数据
   - name: fina_audit        # 财务审计意见
   - name: fina_mainbz       # 主营业务构成
@@ -112,6 +117,7 @@ recent_quarters: 4          # 刷新最近的季度数 (建议 2-4 覆盖常见�
 | 命令 | 作用 |
 | --- | --- |
 | `funda download [选项]` | 抓取并缓存指定数据集，支持增量/全量下载与自动导出 |
+| `funda download --dividend-only` | 独立下载 dividend 数据集（逐日抓取、耗时较长） |
 | `funda download --with-audit` | 在常规批量下载的基础上连同审计意见一并抓取 |
 | `funda export [选项]` | 将缓存的 parquet 转换为 annual/single/cumulative CSV |
 | `funda coverage [选项]` | 检查数据缺口并生成覆盖矩阵或缺口清单 |

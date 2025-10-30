@@ -185,6 +185,11 @@ def parse_cli() -> argparse.Namespace:
         action="store_true",
         help="按配置列出的全部数据集（包含 fina_audit）",
     )
+    sp_dl.add_argument(
+        "--dividend-only",
+        action="store_true",
+        help="仅下载 dividend（逐日抓取，耗时较长）",
+    )
 
     sp_dl.add_argument(
         "--report-types",

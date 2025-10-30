@@ -69,7 +69,8 @@ datasets:
     report_types: [1]       # Consolidated statement
   - name: forecast          # Earnings preannouncement
   - name: express           # Preliminary unaudited results
-  - name: dividend          # Dividend information
+  # Dividend dataset runs separately via `funda download --dividend-only`
+  # (the API requires per-day polling and may take hours to finish).
   - name: fina_indicator    # Financial indicators
   - name: fina_audit        # Financial audit（需按股票循环，建议单独运行）
   - name: fina_mainbz       # Financial main business

@@ -253,6 +253,7 @@ def cmd_download(args: argparse.Namespace) -> None:
 
 
 AUDIT_DATASET_NAME = "fina_audit"
+DIVIDEND_DATASET_NAME = "dividend"
 VIP_ONLY_DATASETS = {"forecast", "fina_indicator", "fina_mainbz"}
 
 DEFAULT_DATASET_CONFIG = [
@@ -261,7 +262,6 @@ DEFAULT_DATASET_CONFIG = [
     {"name": "cashflow", "report_types": [1]},
     {"name": "forecast"},
     {"name": "express"},
-    {"name": "dividend"},
     {"name": "fina_indicator"},
     {"name": "fina_audit"},
     {"name": "fina_mainbz", "type": ["P", "D", "I"]},
@@ -287,6 +287,7 @@ def _validate_dataset_flags(
     add_audit: bool,
     audit_only: bool,
     include_all: bool,
+    dividend_only: bool,
 ) -> None:
     if explicit and (add_audit or audit_only or include_all):
         raise ValueError("--datasets 不可与 --with-audit/--audit-only/--all 同时使用")
@@ -294,6 +295,43 @@ def _validate_dataset_flags(
         raise ValueError("--audit-only 不可与 --with-audit 或 --all 同时使用")
     if add_audit and include_all:
         raise ValueError("--with-audit 与 --all 不可同时使用")
+    if dividend_only and (explicit or add_audit or audit_only or include_all):
+        raise ValueError(
+            "--dividend-only 不可与 --datasets/--with-audit/--audit-only/--all 同时使用"
+        )
+
+
+def _apply_dividend_selection(
+    dataset_requests: list[DatasetRequest],
+    *,
+    explicit: bool,
+    include_all: bool,
+    dividend_only: bool,
+) -> tuple[list[DatasetRequest], bool]:
+    if dividend_only:
+        return [_default_request_for(DIVIDEND_DATASET_NAME)], False
+    if explicit:
+        return list(dataset_requests), False
+
+    non_dividend: list[DatasetRequest] = []
+    dividend_list: list[DatasetRequest] = []
+    for req in dataset_requests:
+        if req.name == DIVIDEND_DATASET_NAME:
+            dividend_list.append(req)
+        else:
+            non_dividend.append(req)
+
+    if include_all:
+        if dividend_list:
+            return non_dividend + dividend_list, False
+        return non_dividend + [
+            _default_request_for(DIVIDEND_DATASET_NAME)
+        ], False
+
+    if dividend_list:
+        return non_dividend + dividend_list, False
+
+    return non_dividend, True
 
 
 def _apply_audit_selection(
@@ -357,9 +395,11 @@ def _info_messages(
     cfg_missing: bool,
     explicit: bool,
     skip_audit_info: bool,
+    skip_dividend_info: bool,
     add_audit: bool,
     audit_only: bool,
     include_all: bool,
+    dividend_only: bool,
 ) -> list[str]:
     infos: list[str] = []
     if skip_audit_info and not (add_audit or audit_only or include_all):
@@ -367,9 +407,14 @@ def _info_messages(
             "提示：默认跳过 fina_audit（需按股票循环）。"
             "使用 --with-audit / --audit-only / --all 可显式启用。"
         )
-    if cfg_missing and not explicit:
+    if skip_dividend_info and not dividend_only:
         infos.append(
-            "提示：未找到配置文件，已按示例配置启用默认数据集（默认跳过 fina_audit）。"
+            "提示：默认跳过 dividend（逐日抓取，耗时较长）。"
+            "使用 --dividend-only 可独立运行。"
+        )
+    if cfg_missing and not explicit and not dividend_only:
+        infos.append(
+            "提示：未找到配置文件，已按示例配置启用默认数据集（默认跳过 fina_audit 与 dividend）。"
         )
     return infos
 
@@ -386,12 +431,21 @@ def _build_dataset_plan(
     add_audit = bool(getattr(args, "with_audit", False))
     audit_only = bool(getattr(args, "audit_only", False))
     include_all = bool(getattr(args, "all", False))
+    dividend_only = bool(getattr(args, "dividend_only", False))
 
     _validate_dataset_flags(
         explicit=explicit,
         add_audit=add_audit,
         audit_only=audit_only,
         include_all=include_all,
+        dividend_only=dividend_only,
+    )
+
+    dataset_requests, skip_dividend_info = _apply_dividend_selection(
+        list(dataset_requests),
+        explicit=explicit,
+        include_all=include_all,
+        dividend_only=dividend_only,
     )
 
     dataset_requests, skip_audit_info = _apply_audit_selection(
@@ -416,9 +470,11 @@ def _build_dataset_plan(
         cfg_missing=cfg_missing,
         explicit=explicit,
         skip_audit_info=skip_audit_info,
+        skip_dividend_info=skip_dividend_info,
         add_audit=add_audit,
         audit_only=audit_only,
         include_all=include_all,
+        dividend_only=dividend_only,
     )
 
     return dataset_requests, info_msgs, warn_msgs

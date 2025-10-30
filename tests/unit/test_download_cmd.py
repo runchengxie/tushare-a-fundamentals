@@ -356,3 +356,126 @@ def test_cmd_download_audit_only_respects_explicit_max_retries(monkeypatch, tmp_
 
     assert captured["init_kwargs"]["max_retries"] == 2
     assert captured["requests"] and captured["requests"][0].name == "fina_audit"
+
+
+def test_cmd_download_default_skips_dividend(monkeypatch, tmp_path):
+    captured: dict[str, object] = {}
+
+    class DummyDownloader:
+        def __init__(self, pro, data_dir, *, vip_pro=None, **kwargs):
+            captured["init_kwargs"] = kwargs
+
+        def run(self, requests, *, start=None, end=None, refresh_periods=0):
+            captured["requests"] = requests
+
+    monkeypatch.setattr(download_cmd, "MarketDatasetDownloader", DummyDownloader)
+    dummy_ctx = ProContext(
+        any_client=object(), vip_client=object(), tokens=["tok"], vip_tokens=["tok"]
+    )
+    monkeypatch.setattr(download_cmd, "init_pro_api", lambda token: dummy_ctx)
+    monkeypatch.setattr(download_cmd, "ensure_enough_credits", lambda pro, required=5000: None)
+    monkeypatch.setattr(download_cmd, "load_yaml", lambda path: None)
+
+    args = Namespace(
+        config=None,
+        datasets=None,
+        years=None,
+        quarters=None,
+        since=None,
+        until=None,
+        audit_quarters=None,
+        audit_years=None,
+        audit_only=False,
+        with_audit=False,
+        all=False,
+        fields="",
+        outdir=None,
+        prefix=None,
+        format=None,
+        token=None,
+        report_types=None,
+        allow_future=False,
+        recent_quarters=None,
+        data_dir=str(tmp_path),
+        use_vip=None,
+        max_per_minute=None,
+        state_path=None,
+        export_out_dir=None,
+        export_out_format=None,
+        export_kinds=None,
+        export_annual_strategy=None,
+        export_years=None,
+        export_strict=None,
+        export_enabled=None,
+        no_export=True,
+        max_retries=None,
+        progress="plain",
+        dividend_only=False,
+    )
+
+    download_cmd.cmd_download(args)
+
+    requested = {req.name for req in captured.get("requests", [])}
+    assert download_cmd.DIVIDEND_DATASET_NAME not in requested
+    assert "income" in requested
+
+
+def test_cmd_download_dividend_only(monkeypatch, tmp_path):
+    captured: dict[str, object] = {}
+
+    class DummyDownloader:
+        def __init__(self, pro, data_dir, *, vip_pro=None, **kwargs):
+            captured["init_kwargs"] = kwargs
+
+        def run(self, requests, *, start=None, end=None, refresh_periods=0):
+            captured["requests"] = requests
+
+    monkeypatch.setattr(download_cmd, "MarketDatasetDownloader", DummyDownloader)
+    dummy_ctx = ProContext(
+        any_client=object(), vip_client=object(), tokens=["tok"], vip_tokens=["tok"]
+    )
+    monkeypatch.setattr(download_cmd, "init_pro_api", lambda token: dummy_ctx)
+    monkeypatch.setattr(download_cmd, "ensure_enough_credits", lambda pro, required=5000: None)
+    monkeypatch.setattr(download_cmd, "load_yaml", lambda path: None)
+
+    args = Namespace(
+        config=None,
+        datasets=None,
+        years=None,
+        quarters=None,
+        since=None,
+        until=None,
+        audit_quarters=None,
+        audit_years=None,
+        audit_only=False,
+        with_audit=False,
+        all=False,
+        fields="",
+        outdir=None,
+        prefix=None,
+        format=None,
+        token=None,
+        report_types=None,
+        allow_future=False,
+        recent_quarters=None,
+        data_dir=str(tmp_path),
+        use_vip=None,
+        max_per_minute=None,
+        state_path=None,
+        export_out_dir=None,
+        export_out_format=None,
+        export_kinds=None,
+        export_annual_strategy=None,
+        export_years=None,
+        export_strict=None,
+        export_enabled=None,
+        no_export=True,
+        max_retries=None,
+        progress="plain",
+        dividend_only=True,
+    )
+
+    download_cmd.cmd_download(args)
+
+    requested = [req.name for req in captured.get("requests", [])]
+    assert requested == [download_cmd.DIVIDEND_DATASET_NAME]
