@@ -17,7 +17,7 @@ pytestmark = pytest.mark.unit
 class DummyPro:
     def __init__(self):
         self.period_calls: list[str] = []
-        self.window_calls: list[tuple[str, str]] = []
+        self.window_calls: list[dict[str, object]] = []
         self.audit_calls: list[tuple[str, str]] = []
 
     def income_vip(self, **kwargs):
@@ -33,17 +33,32 @@ class DummyPro:
         )
 
     def dividend(self, **kwargs):
-        win = (kwargs.get("start_date"), kwargs.get("end_date"))
-        self.window_calls.append(win)
-        return pd.DataFrame(
-            {
-                "ts_code": ["000001.SZ"],
-                "ann_date": [kwargs.get("end_date")],
-                "record_date": [None],
-                "ex_date": [None],
-                "imp_ann_date": [None],
-            }
-        )
+        self.window_calls.append(dict(kwargs))
+        start = kwargs.get("start_date")
+        end = kwargs.get("end_date")
+        ann_date = kwargs.get("ann_date")
+        if start and end:
+            dates = [start, end] if start != end else [start]
+            return pd.DataFrame(
+                {
+                    "ts_code": ["000001.SZ"] * len(dates),
+                    "ann_date": dates,
+                    "record_date": [None] * len(dates),
+                    "ex_date": [None] * len(dates),
+                    "imp_ann_date": [None] * len(dates),
+                }
+            )
+        if ann_date:
+            return pd.DataFrame(
+                {
+                    "ts_code": ["000001.SZ"],
+                    "ann_date": [ann_date],
+                    "record_date": [None],
+                    "ex_date": [None],
+                    "imp_ann_date": [None],
+                }
+            )
+        return pd.DataFrame()
 
     def fina_audit(self, **kwargs):
         ts_code = kwargs.get("ts_code")
@@ -167,7 +182,14 @@ def test_market_downloader_calendar(tmp_path, monkeypatch):
     req = DatasetRequest(name="dividend")
     dl.run([req], start="2020-01-01", end="2020-02-29")
     assert saved
-    assert pro.window_calls == [("20200101", "20200131"), ("20200201", "20200229")]
+    assert len(pro.window_calls) == 2
+    windows = [
+        (call.get("start_date"), call.get("end_date")) for call in pro.window_calls
+    ]
+    assert windows == [("20200101", "20200131"), ("20200201", "20200229")]
+    for call, (start, end) in zip(pro.window_calls, windows):
+        assert call.get("ann_date") == start
+        assert call.get("where") == f"ann_date>='{start}' and ann_date<='{end}'"
     state = json.loads(Path(state_path).read_text("utf-8"))
     assert state["dividend"]["last_date"] == "20200229"
 

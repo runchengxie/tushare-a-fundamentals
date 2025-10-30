@@ -32,6 +32,7 @@ class DatasetSpec:
     extra_params: Dict[str, Any] = field(default_factory=dict)
     requires_ts_code: bool = False
     code_param: str = "ts_code"
+    date_window_mode: str = "range"
 
 
 def _fields_for(name: str) -> Optional[str]:
@@ -125,6 +126,7 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         ),
         default_year_column="ann_date",
         fields=_fields_for("dividend"),
+        date_window_mode="ann_date",
     ),
     "fina_indicator": DatasetSpec(
         name="fina_indicator",

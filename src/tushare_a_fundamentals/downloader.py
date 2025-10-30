@@ -7,7 +7,7 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
@@ -246,6 +246,7 @@ class MarketDatasetDownloader:
         self._max_per_minute = max(int(max_per_minute), 0)
         self._client_limiters: Dict[int, RateLimiter] = {}
         self._warned_vip_fallback = False
+        self._warned_dividend_range_failure = False
         self._ensure_limiter(self.pro)
         if self.vip_pro is not None:
             self._ensure_limiter(self.vip_pro)
@@ -1182,6 +1183,14 @@ class MarketDatasetDownloader:
     def _fetch_window(
         self, spec: DatasetSpec, start: str, end: str
     ) -> Optional[pd.DataFrame]:
+        mode = getattr(spec, "date_window_mode", "range")
+        if mode == "ann_date":
+            return self._fetch_dividend_window(spec, start, end)
+        return self._fetch_window_range(spec, start, end)
+
+    def _fetch_window_range(
+        self, spec: DatasetSpec, start: str, end: str
+    ) -> Optional[pd.DataFrame]:
         params = dict(spec.extra_params)
         params[spec.date_start_param] = start
         params[spec.date_end_param] = end
@@ -1193,6 +1202,95 @@ class MarketDatasetDownloader:
             paginate=spec.api_supports_pagination,
         )
         return df
+
+    def _fetch_dividend_window(
+        self, spec: DatasetSpec, start: str, end: str
+    ) -> Optional[pd.DataFrame]:
+        params = dict(spec.extra_params)
+        params[spec.date_start_param] = start
+        params[spec.date_end_param] = end
+        params.setdefault("ann_date", start)
+        if "where" not in params:
+            params["where"] = f"ann_date>='{start}' and ann_date<='{end}'"
+        df = self._call_api(
+            spec.api,
+            params,
+            spec.fields,
+            client=self.pro,
+            paginate=spec.api_supports_pagination,
+        )
+        if df is not None and not df.empty:
+            return df
+
+        if not getattr(self, "_warned_dividend_range_failure", False):
+            self._log(
+                "提示：dividend 接口不支持按区间抓取 ann_date，将改用逐日抓取（耗时较长）。"
+            )
+            self._warned_dividend_range_failure = True
+
+        frames: list[pd.DataFrame] = []
+        covered_dates: set[str] = set()
+        if df is not None and not df.empty:
+            frames.append(df)
+            covered_dates = {
+                value
+                for value in (
+                    self._normalize_calendar_value(v) for v in df.get("ann_date", [])
+                )
+                if value
+            }
+        for day in self._iter_date_range(start, end):
+            if day in covered_dates:
+                continue
+            day_params = dict(spec.extra_params)
+            day_params["ann_date"] = day
+            day_df = self._call_api(
+                spec.api,
+                day_params,
+                spec.fields,
+                client=self.pro,
+                paginate=spec.api_supports_pagination,
+            )
+            if day_df is None or day_df.empty:
+                continue
+            frames.append(day_df)
+            covered_dates.update(
+                value
+                for value in (
+                    self._normalize_calendar_value(v) for v in day_df.get("ann_date", [])
+                )
+                if value
+            )
+        if not frames:
+            return df
+        if len(frames) == 1:
+            return frames[0]
+        return _concat_non_empty(frames)
+
+    def _iter_date_range(self, start: str, end: str) -> list[str]:
+        try:
+            start_date = datetime.strptime(start, DATE_FMT).date()
+            end_date = datetime.strptime(end, DATE_FMT).date()
+        except ValueError:
+            return []
+        days: list[str] = []
+        cur = start_date
+        while cur <= end_date:
+            days.append(cur.strftime(DATE_FMT))
+            cur += timedelta(days=1)
+        return days
+
+    def _normalize_calendar_value(self, value: Any) -> Optional[str]:
+        if value is None:
+            return None
+        text = str(value).strip()
+        if not text or text.lower() in {"nan", "nat"}:
+            return None
+        if len(text) == 10 and text[4] == "-" and text[7] == "-":
+            text = text.replace("-", "")
+        if len(text) != 8 or not text.isdigit():
+            return None
+        return text
 
     def _call_api(  # noqa: C901
         self,
